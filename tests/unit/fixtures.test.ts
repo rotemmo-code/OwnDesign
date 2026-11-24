@@ -196,6 +196,31 @@ describe('samples helper', () => {
     expect(samples.describeSamples).toBe(describe);
   });
 
+  it('accepts a manifest path in a subfolder', async () => {
+    writeFileSync(path.join(dir, 'manifest.json'), JSON.stringify({ S01: { file: 'sub/a.pdf', page: 1 } }));
+    expect((await import('../samples')).samplePath('S01')).toBe(path.join(dir, 'sub', 'a.pdf'));
+  });
+
+  const outside: [string, (dir: string) => string][] = [
+    ['the parent folder', () => '../out.pdf'],
+    ['the parent folder through a subfolder', () => 'sub/../../out.pdf'],
+    ['an absolute path', () => path.resolve('out.pdf')],
+    ['a sibling folder whose name starts the same', dir => `${dir}2/out.pdf`],
+    ['the folder itself', () => '.'],
+  ];
+  if (process.platform === 'win32') outside.push(['another drive', () => 'Z:/out.pdf'], ['a network share', () => '//server/share/out.pdf']);
+  it.each(outside)('refuses a manifest path that leaves the folder: %s', async (_, file) => {
+    writeFileSync(path.join(dir, 'manifest.json'), JSON.stringify({ S01: { file: file(dir), page: 1 } }));
+    const { samplePath } = await import('../samples');
+    expect(() => samplePath('S01')).toThrow('S01');
+  });
+
+  it.each(['missing', 'manifest.json'])('fails, and does not skip, when ETELIER_SAMPLES is not a folder: %s', async name => {
+    writeFileSync(path.join(dir, 'manifest.json'), '{}');
+    vi.stubEnv('ETELIER_SAMPLES', path.join(dir, name));
+    await expect(import('../samples')).rejects.toThrow('ETELIER_SAMPLES');
+  });
+
   it('counts a missing manifest as samples absent', async () => {
     const samples = await import('../samples');
     expect(samples.hasSamples).toBe(false);

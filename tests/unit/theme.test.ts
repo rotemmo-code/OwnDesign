@@ -23,6 +23,12 @@ it('the eight colours are all different, and added, moved and removed also diffe
   expect(new Set([KIND_STYLE.added, KIND_STYLE.moved, KIND_STYLE.removed].map(s => JSON.stringify(s))).size).toBe(3);
 });
 
+it('kept and moved walls are solid, an added wall is hatched, a removed wall is an empty dashed outline', () => {
+  for (const kind of ['existing', 'exterior', 'mamad', 'moved'] as const) expect(KIND_STYLE[kind], kind).toEqual({ fill: 'solid', dashed: false });
+  expect(KIND_STYLE.added).toEqual({ fill: 'hatch', dashed: false });
+  expect(KIND_STYLE.removed).toEqual({ fill: 'none', dashed: true });
+});
+
 it('no colour literal exists in src/ outside theme.ts', () => {
   const literal = /#(?:[\da-f]{8}|[\da-f]{6}|[\da-f]{3,4})\b|\b(?:rgb|hsl)a?\(/gi;
   expect('#fff #1F4E79 #80808080 rgb(1 hsla(2'.match(literal)).toHaveLength(5);

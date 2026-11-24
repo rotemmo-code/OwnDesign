@@ -5,6 +5,10 @@ import { copy } from '../../src/copy';
 import { COLOR } from '../../src/theme';
 import { ALL_16_PAGES, describeSamples, samplePath } from '../samples';
 
+// The approved policy, word for word. A change here is a change of policy and needs the owner.
+const POLICY =
+  "default-src 'none'; script-src 'self'; worker-src 'self' blob:; style-src 'self'; style-src-attr 'unsafe-inline'; img-src 'self' blob: data:; font-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'";
+
 declare global {
   interface Window {
     violations: string[];
@@ -41,7 +45,7 @@ test('CSP blocks inline script and foreign connect', async ({ page }) => {
   const csp = await page.locator('meta[http-equiv="Content-Security-Policy"]').getAttribute('content');
   expect(csp).toContain("default-src 'none'");
   expect(csp).not.toContain("'unsafe-eval'");
-  expect(readFileSync('index.html', 'utf8')).toContain(`content="${csp}"`); // the build must not change it
+  expect(csp).toBe(POLICY);
   expect(await page.evaluate(() => fetch('https://example.com').then(() => 'sent', () => 'blocked'))).toBe('blocked');
   const ran = await page.evaluate(() => {
     const script = document.createElement('script');
@@ -54,6 +58,34 @@ test('CSP blocks inline script and foreign connect', async ({ page }) => {
   const violations = () => page.evaluate(() => window.violations);
   await expect.poll(violations).toContainEqual(expect.stringMatching(/^connect-src https:\/\/example\.com/));
   await expect.poll(violations).toContainEqual('script-src-elem inline');
+});
+
+test('the policy also comes as a header, with the page and with its assets', async ({ page, request }) => {
+  await page.goto('/');
+  const script = await page.locator('script[type="module"]').getAttribute('src');
+  const style = await page.locator('link[rel="stylesheet"]').getAttribute('href');
+  for (const url of ['/', script!, style!, '/pdfjs/standard_fonts/LiberationSans-Regular.ttf']) {
+    expect((await request.get(url)).headers()['content-security-policy'], url).toBe(POLICY);
+  }
+});
+
+test('a worker loaded from this origin is held by the policy too', async ({ page, baseURL }) => {
+  await page.goto('/');
+  const script = await page.locator('script[type="module"]').getAttribute('src');
+  // A meta policy does not reach a worker loaded by URL: only the headers of its own response do. The probe is not in the
+  // build: its body is made up here, its headers are the ones the server sends with a real built script.
+  await page.route('**/probe.worker.js', async route => {
+    const response = await route.fetch({ url: baseURL + script! });
+    const body = `
+      addEventListener('securitypolicyviolation', e => postMessage(e.effectiveDirective + ' ' + e.blockedURI));
+      try { new Function(''); postMessage('new Function ran'); } catch { postMessage('new Function blocked'); }
+      fetch('https://example.com', { mode: 'no-cors' }).then(() => postMessage('fetch sent'), () => postMessage('fetch blocked'));`;
+    await route.fulfill({ response, body, headers: { ...response.headers(), 'content-length': String(body.length) } });
+  });
+  await page.evaluate(() => {
+    new Worker('/probe.worker.js', { type: 'module' }).onmessage = e => window.violations.push(e.data);
+  });
+  await expect.poll(() => page.evaluate(() => window.violations.toSorted())).toEqual(['connect-src https://example.com/', 'fetch blocked', 'new Function blocked', 'script-src eval']);
 });
 
 test('the drawing container is not mirrored in the RTL page', async ({ page }) => {

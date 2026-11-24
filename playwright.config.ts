@@ -5,6 +5,7 @@ const baseURL = `http://127.0.0.1:${port}`;
 
 export default defineConfig({
   testDir: 'tests/e2e',
+  forbidOnly: true,
   use: { baseURL },
   projects: [
     { name: 'chromium', use: { browserName: 'chromium' } },
