@@ -1,0 +1,38 @@
+{
+  "name": "etelier",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "predev": "node scripts/copy-pdfjs-assets.mjs",
+    "dev": "vite",
+    "prebuild": "node scripts/copy-pdfjs-assets.mjs",
+    "build": "vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc",
+    "test:unit": "vitest run --project unit",
+    "test:edge": "vitest run --passWithNoTests --project edge",
+    "test:regression": "vitest run --passWithNoTests --project regression",
+    "test:e2e": "playwright test",
+    "measure": "vitest run tests/measure --passWithNoTests --reporter default",
+    "verify": "npm run typecheck && npm run test:unit && npm run test:edge && npm run test:regression && npm run test:e2e && npm audit --audit-level=high"
+  },
+  "dependencies": {
+    "@fontsource/assistant": "5.3.0",
+    "jsts": "2.12.1",
+    "pdfjs-dist": "6.5.438",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.65.0",
+    "@types/node": "24.19.2",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@vitejs/plugin-react": "6.3.0",
+    "typescript": "6.0.3",
+    "vite": "8.2.6",
+    "vitest": "5.1.0"
+  }
+}

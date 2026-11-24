@@ -1,0 +1,11 @@
+node_modules/
+dist/
+public/pdfjs/
+samples/
+test-results/
+playwright-report/
+docs/
+/floorplan-*.html
+/plan-import-floorplan.md
+.claude/
+.superpowers/
