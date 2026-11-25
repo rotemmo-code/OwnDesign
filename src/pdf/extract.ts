@@ -207,10 +207,21 @@ function readPaths(
 
   const paths: PathItem[] = [];
   let painted = 0;
+  let skipped = 0; // open forms and groups that are not entered
 
   for (let i = 0; i < fnArray.length; i++) {
+    const op = fnArray[i];
     const args = argsArray[i];
-    switch (fnArray[i]) {
+    // pdf.js neither saves nor restores for a form on a layer that is off. Followed between W and its path only: elsewhere what comes after stays where the file puts it.
+    if ((op === OPS.paintFormXObjectBegin || op === OPS.beginGroup) && !content.visible && (pendingClip || skipped)) {
+      skipped++;
+      continue;
+    }
+    if ((op === OPS.paintFormXObjectEnd || op === OPS.endGroup) && skipped) {
+      skipped--;
+      continue;
+    }
+    switch (op) {
       case OPS.save:
         save();
         break;

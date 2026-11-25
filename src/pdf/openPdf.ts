@@ -35,7 +35,11 @@ export async function openPdf(bytes: ArrayBuffer): Promise<{ ok: true; session: 
         waiting.delete(id);
         resolve(result as T);
       });
-      worker.postMessage({ id, ...request });
+      try {
+        worker.postMessage({ id, ...request });
+      } catch {
+        end('failed'); // a detached buffer cannot be sent
+      }
     });
 
   const opened = await ask<{ ok: true; pageCount: number }>({ open: bytes });

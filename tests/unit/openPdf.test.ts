@@ -114,6 +114,17 @@ it('a worker error is failed; close settles what is pending', async () => {
   expect(await session.extract(1)).toEqual({ ok: false, code: 'failed' });
 });
 
+it('a buffer that cannot be sent is failed', async () => {
+  const bytes = new ArrayBuffer(8);
+  structuredClone(bytes, { transfer: [bytes] }); // detaches it
+  vi.spyOn(StubWorker.prototype, 'postMessage').mockImplementationOnce(message => {
+    structuredClone(message); // as a worker does
+  });
+  expect(await openPdf(bytes)).toEqual({ ok: false, code: 'failed' });
+  expect(StubWorker.last.terminated).toBeGreaterThan(0);
+  expect(vi.getTimerCount()).toBe(0);
+});
+
 it('a refusal ends the worker', async () => {
   const opening = openPdf(new ArrayBuffer(8));
   const worker = StubWorker.last;
