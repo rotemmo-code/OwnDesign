@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TIMEOUT_MS } from '../../src/limits';
 import { openPdf } from '../../src/pdf/openPdf';
 
@@ -120,4 +120,64 @@ it('a refusal ends the worker', async () => {
   worker.says({ id: 1, result: { ok: false, code: 'locked' } });
   expect(await opening).toEqual({ ok: false, code: 'locked' });
   expect(worker.terminated).toBe(1);
+});
+
+// Node has no Web Worker, so the worker's own side is loaded here with a made-up global scope and a made-up reader.
+describe('reader.worker', () => {
+  const reader = { openDocument: vi.fn(), extractPage: vi.fn() };
+  const post = vi.fn();
+  let receive: (event: { data: unknown }) => Promise<void>;
+
+  beforeEach(async () => {
+    vi.resetModules();
+    vi.resetAllMocks();
+    vi.doMock('../../src/pdf/extract', () => reader);
+    vi.doMock('pdfjs-dist/legacy/build/pdf.mjs', () => ({}));
+    vi.doMock('pdfjs-dist/legacy/build/pdf.worker.mjs', () => ({}));
+    vi.stubGlobal('location', { origin: 'https://example.invalid' });
+    vi.stubGlobal('postMessage', post);
+    vi.stubGlobal('addEventListener', (_type: string, listener: typeof receive) => {
+      receive = listener;
+    });
+    await import('../../src/pdf/reader.worker');
+  });
+  afterEach(() => {
+    vi.doUnmock('../../src/pdf/extract');
+    vi.doUnmock('pdfjs-dist/legacy/build/pdf.mjs');
+    vi.doUnmock('pdfjs-dist/legacy/build/pdf.worker.mjs');
+  });
+
+  it('opens a file and reads its pages', async () => {
+    const doc = { numPages: 3 };
+    reader.openDocument.mockResolvedValue({ ok: true, doc });
+    await receive({ data: { id: 1, open: Uint8Array.of(7, 8).buffer } });
+    expect(reader.openDocument).toHaveBeenCalledWith(expect.anything(), Uint8Array.of(7, 8), 'https://example.invalid/pdfjs/');
+    reader.extractPage.mockResolvedValue({ ok: false, code: 'image-only' });
+    await receive({ data: { id: 2, page: 3 } });
+    expect(reader.extractPage).toHaveBeenCalledWith(expect.anything(), doc, 3);
+    expect(post.mock.calls).toEqual([[{ id: 1, result: { ok: true, pageCount: 3 } }], [{ id: 2, result: { ok: false, code: 'image-only' } }]]);
+  });
+
+  it('passes a refusal on', async () => {
+    reader.openDocument.mockResolvedValue({ ok: false, code: 'locked' });
+    await receive({ data: { id: 1, open: new ArrayBuffer(1) } });
+    expect(post.mock.calls).toEqual([[{ id: 1, result: { ok: false, code: 'locked' } }]]);
+  });
+
+  it('answers failed at once when opening or reading throws', async () => {
+    reader.openDocument.mockRejectedValue(new Error('out of memory'));
+    await receive({ data: { id: 1, open: new ArrayBuffer(1) } });
+    reader.extractPage.mockRejectedValue(new Error('out of memory'));
+    await receive({ data: { id: 2, page: 1 } });
+    expect(post.mock.calls).toEqual([1, 2].map(id => [{ id, result: { ok: false, code: 'failed' } }]));
+  });
+
+  it('answers failed when the answer cannot be sent', async () => {
+    reader.extractPage.mockResolvedValue({ ok: true });
+    post.mockImplementationOnce(() => {
+      throw new Error('it could not be cloned');
+    });
+    await receive({ data: { id: 3, page: 1 } });
+    expect(post.mock.calls.at(-1)).toEqual([{ id: 3, result: { ok: false, code: 'failed' } }]);
+  });
 });

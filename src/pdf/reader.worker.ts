@@ -7,12 +7,18 @@ import type { ReaderRequest } from './openPdf';
 const assets = new URL(`${import.meta.env.BASE_URL}pdfjs/`, location.origin).href;
 let doc: PDFDocumentProxy;
 
+async function answer(request: ReaderRequest) {
+  if ('page' in request) return extractPage(pdfjs, doc, request.page);
+  const opened = await openDocument(pdfjs, new Uint8Array(request.open), assets);
+  if (!opened.ok) return opened;
+  doc = opened.doc;
+  return { ok: true, pageCount: doc.numPages };
+}
+
 addEventListener('message', async ({ data }: MessageEvent<{ id: number } & ReaderRequest>) => {
-  if ('open' in data) {
-    const opened = await openDocument(pdfjs, new Uint8Array(data.open), assets);
-    if (opened.ok) doc = opened.doc;
-    postMessage({ id: data.id, result: opened.ok ? { ok: true, pageCount: opened.doc.numPages } : opened });
-  } else {
-    postMessage({ id: data.id, result: await extractPage(pdfjs, doc, data.page) });
+  try {
+    postMessage({ id: data.id, result: await answer(data) });
+  } catch {
+    postMessage({ id: data.id, result: { ok: false, code: 'failed' } });
   }
 });

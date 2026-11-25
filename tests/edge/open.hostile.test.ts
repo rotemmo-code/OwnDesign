@@ -29,8 +29,9 @@ it.each<[string, OpenError, () => Uint8Array, number?]>([
   ['49 paths', 'image-only', () => onePage(ticks(49))],
   ['100,001 paths', 'too-complex', () => manyPaths(100_001)],
   ['120,000 paths', 'too-complex', () => manyPaths(120_000)],
-  ['1,500 clips inside each other', 'too-complex', () => onePage(`${'0 0 600 400 re W n '.repeat(1500)}${ticks(60)}`)],
   ['page 2 of one page', 'corrupt', planPdf, 2],
+  ['a page wider than all numbers', 'corrupt', () => onePage(ticks(60), { page: `/UserUnit 4${'0'.repeat(305)}` })],
+  ['a page higher than all numbers', 'corrupt', () => onePage(ticks(60), { page: `/Rotate 90/UserUnit 4${'0'.repeat(305)}` })],
 ])('%s -> %s', async (_name, code, pdf, pageNo) => {
   expect(await read(pdf(), pageNo)).toEqual({ ok: false, code });
 });
@@ -40,7 +41,7 @@ it('the edges that open', async () => {
   expect(await pathCount(onePage(ticks(50)))).toBe(50);
   expect(await pathCount(manyPaths(100_000))).toBe(100_000);
   expect(await pathCount(onePage(`${'0 0 m 1 1 l S '.repeat(100_000)}0 0 m 1 1 l n`))).toBe(100_000); // n paints nothing
-  expect(await pathCount(onePage(`${'0 0 600 400 re W n '.repeat(1000)}${ticks(60)}`))).toBe(60); // clips inside each other
+  expect(await pathCount(onePage(`${'0 0 600 400 re W n '.repeat(1500)}${ticks(60)}`))).toBe(60); // clips inside each other
   expect(await pathCount(planPdf({ pages: 20 }), 20)).toBe(70);
   expect(await pathCount(encryptedPdf(''))).toBe(60);
 });

@@ -122,6 +122,12 @@ describe('planPdf', () => {
     expect([page.widthPt, page.heightPt, page.rotation]).toEqual([595, 842, 90]);
     near([points(page.paths.filter(p => p.fill)[2])[0]], [[493.6614, 120]]);
   });
+
+  it.each([0, 90, 180, 270] as const)('line widths do not depend on the rotation: %i', async rotate => {
+    const { paths } = await read(planPdf({ rotate }));
+    expect(paths[0].lineWidth).toBeCloseTo(0.25, 6); // the frame
+    expect(paths.at(-1)!.lineWidth).toBeCloseTo(0.566929, 6); // a window line: 10 mm at 1:50
+  });
 });
 
 describe('layers', () => {
@@ -162,6 +168,15 @@ describe('layers', () => {
       objects: [...GROUPS.objects, '<</Type/OCMD/OCGs[5 0 R 6 0 R]/P/AnyOn>>', '<</Type/OCMD/OCGs[5 0 R 6 0 R]/P/AllOn>>'],
     });
     expect(paths.map(p => p.layer)).toEqual(['a']);
+  });
+
+  it('a membership by expression takes the name of the first group in it and is off when it says so', async () => {
+    const { paths } = await drawn('/OC /M BDC 0 0 9 9 re f EMC /OC /N BDC 0 0 8 8 re f EMC /OC /O BDC 0 0 7 7 re f EMC', {
+      resources: '/Properties<</M 7 0 R/N 8 0 R/O 9 0 R>>',
+      catalog: '/OCProperties<</OCGs[5 0 R 6 0 R]/D<<>>>>',
+      objects: [...GROUPS.objects, '<</Type/OCMD/VE[/Or[/And[/Not 5 0 R]]6 0 R]>>', '<</Type/OCMD/VE[/And 6 0 R 5 0 R]>>', '<</Type/OCMD/VE[/Not 6 0 R]>>'],
+    });
+    expect(paths.map(p => p.layer)).toEqual(['a', 'b']);
   });
 });
 
@@ -210,6 +225,91 @@ describe('forms, groups and clips', () => {
   it('a clip that is also painted takes effect after the paint', async () => {
     const { paths } = await drawn('q 0 0 50 50 re W f 1 1 5 5 re f Q');
     expect(paths.map(p => p.clipId)).toEqual([0, 1]);
+  });
+
+  it('Q, the end of a form and the end of a group drop a clip that no path has closed', async () => {
+    const afterQ = await drawn('q 0 0 50 50 re W Q 100 100 50 50 re f 200 200 50 50 re f 300 300 50 50 re f');
+    expect(afterQ.paths.map(p => p.clipId)).toEqual([0, 0, 0]);
+    expect(afterQ.paths.map(p => p.subpaths.length)).toEqual([2, 1, 1]); // the rectangle before W is painted with the next path
+    for (const group of ['', '/Group<</S/Transparency>>']) {
+      const { paths } = await drawn('/F Do 100 100 50 50 re f 200 200 50 50 re f', {
+        ...FORM,
+        objects: [`<</Type/XObject/Subtype/Form/BBox[0 0 600 400]${group}>>`],
+        streams: { 5: bytes('0 0 50 50 re W') },
+      });
+      expect(paths.map(p => p.clipId)).toEqual([0, 0]);
+    }
+    // a Q too many restores nothing, so the clip stays
+    const tooMany = await drawn('0 0 50 50 re W Q 100 100 50 50 re f 200 200 50 50 re f');
+    expect(tooMany.paths).toHaveLength(1);
+  });
+
+  it('a form with a BBox, drawn between W and its path, is hidden; without a BBox the clip waits for its first path', async () => {
+    const form = async (bbox: string) => {
+      const { paths } = await drawn('0 0 50 50 re W /F Do 100 100 50 50 re f', {
+        ...FORM,
+        objects: [`<</Type/XObject/Subtype/Form${bbox}>>`],
+        streams: { 5: bytes('10 10 50 50 re f 200 200 30 30 re f') },
+      });
+      return paths.map(p => [p.clipId, p.subpaths.length]);
+    };
+    expect(await form('/BBox[0 0 600 400]')).toEqual([[0, 2]]);
+    expect(await form('')).toEqual([[0, 1], [0, 2]]);
+  });
+
+  // What pdf.js shows of a fill (F) and a stroke (S) inside a group, by the alpha and blend outside it. Seen in Chromium and Firefox.
+  const ALPHA = { '/ca 1': 'FS', '/ca 0': '', '/ca 0/CA 0': '', '/ca 0/CA .5': '', '/ca .5/CA 0': 'FS', '/CA 0/BM/Multiply': 'FS' };
+  const DIRECT = { ...ALPHA, '/CA 0': 'F', '/CA 0/BM/Normal': 'F' }; // painted straight onto the page, so the stroke alpha outside counts
+  const APART = { ...ALPHA, '/CA 0': 'FS', '/CA 0/BM/Normal': 'FS' };
+  const seen = async (outside: string, group: string, inside = '') => {
+    const { paths } = await drawn('/Z gs /F Do', {
+      resources: `/XObject<</F 5 0 R>>/ExtGState<</Z<<${outside}>>>>`,
+      objects: [
+        `<</Type/XObject/Subtype/Form/BBox[0 0 600 400]/Resources<</ExtGState<</One<</ca 1/CA 1>>/Mul<</BM/Multiply>>/Mask<</SMask<</S/Luminosity/G 6 0 R>>>>>>>>${group}>>`,
+        '<</Type/XObject/Subtype/Form/BBox[0 0 600 400]/Group<</S/Transparency/CS/DeviceGray>>>>',
+      ],
+      streams: { 5: bytes(`${inside} 0 0 9 9 re f 0 0 m 9 9 l S`), 6: bytes('1 g 0 0 600 400 re f') },
+    });
+    return paths.map(p => (p.fill ? 'F' : '') + (p.stroke ? 'S' : '')).join('');
+  };
+  it.each<[string, string, string, Record<string, string>]>([
+    ['a group', '/Group<</S/Transparency>>', '', DIRECT],
+    ['a group with a blend in it', '/Group<</S/Transparency>>', '/Mul gs', DIRECT],
+    ['a group with a soft mask in it', '/Group<</S/Transparency>>', '/Mask gs', APART],
+    ['an isolated group', '/Group<</S/Transparency/I true>>', '', DIRECT],
+    ['an isolated group with a blend in it', '/Group<</S/Transparency/I true>>', '/Mul gs', APART],
+    ['a knockout group', '/Group<</S/Transparency/K true>>', '', APART],
+    ['a gray group', '/Group<</S/Transparency/CS/DeviceGray>>', '', APART],
+    ['a group that sets its own alpha', '/Group<</S/Transparency>>', '/One gs', APART],
+  ])('%s is hidden by a fill alpha of 0 and starts afresh when pdf.js paints it apart', async (_name, group, inside, want) => {
+    for (const [outside, shown] of Object.entries(want)) expect(await seen(outside, group, inside), outside).toBe(shown);
+  });
+
+  it('a form that is no group keeps the alpha outside it, and after a group that alpha is back', async () => {
+    expect(await seen('/ca 0', '')).toBe('S');
+    expect(await seen('/ca .5/CA 0', '')).toBe('F');
+    const { paths } = await drawn('/Z gs /F Do 0 0 9 9 re B', {
+      resources: '/XObject<</F 5 0 R>>/ExtGState<</Z<</ca .5/CA 0>>>>',
+      objects: ['<</Type/XObject/Subtype/Form/BBox[0 0 600 400]/Group<</S/Transparency>>>>'],
+      streams: { 5: bytes('0 0 m 9 9 l S') },
+    });
+    expect(paths.map(p => [p.fill, p.stroke])).toEqual([[false, true], [true, false]]);
+  });
+
+  it('a group under a soft mask or inside a knockout group is painted apart', async () => {
+    const XOBJECTS = '/XObject<</F 5 0 R/K 6 0 R/P 9 0 R/L 10 0 R>>';
+    const group = (extra = '') => `<</Type/XObject/Subtype/Form/BBox[0 0 600 400]/Group<</S/Transparency${extra}>>/Resources<<${XOBJECTS}/ExtGState<</Z<</CA 0>>>>>>>>`;
+    const resources = `${XOBJECTS}/ExtGState<</Z<</CA 0>>/M<</SMask<</S/Luminosity/G 7 0 R>>>>/N<</SMask/None>>>>/Properties<</Off 8 0 R>>`;
+    const catalog = '/OCProperties<</OCGs[8 0 R]/D<</OFF[8 0 R]>>>>';
+    const objects = [group(), group('/K true'), group('/CS/DeviceGray'), '<</Type/OCG/Name(off)>>', group(), group('/K true')];
+    const streams = { 5: bytes('0 0 m 9 9 l S'), 6: bytes('/Z gs /F Do'), 7: bytes('1 g 0 0 600 400 re f'), 9: bytes('/Z gs /F Do'), 10: bytes('/P Do') };
+    const draw = async (content: string) => (await drawn(content, { resources, catalog, objects, streams })).paths.length;
+    expect(await draw('/Z gs /F Do')).toBe(0);
+    expect(await draw('/M gs /Z gs /F Do')).toBe(1);
+    expect(await draw('/M gs /N gs /Z gs /F Do')).toBe(0);
+    expect(await draw('/OC /Off BDC /M gs EMC /Z gs /F Do')).toBe(0);
+    expect(await draw('/K Do')).toBe(1);
+    expect(await draw('/L Do')).toBe(0); // in a group inside the knockout group
   });
 
   it('what lies wholly outside its clip or the page is not read; what crosses is', async () => {
@@ -263,6 +363,23 @@ describe('paths', () => {
     expect(paths.flatMap(p => p.subpaths).some(s => s.curved)).toBe(false);
   });
 
+  it('every move begins a subpath, after an open one and after a closed one', async () => {
+    const { paths } = await drawn('0 0 m 9 0 l 20 0 m 29 0 l 40 0 m 49 0 l 49 9 l h 60 0 m 69 0 l S');
+    expect(paths[0].subpaths.map(s => [s.pts.length, s.closed, s.curved])).toEqual([[2, false, false], [2, false, false], [3, true, false], [2, false, false]]);
+    near(paths[0].subpaths.map(s => s.pts[0]), [[0, 400], [20, 400], [40, 400], [60, 400]]);
+  });
+
+  it('a path without a starting point starts where a canvas starts it', async () => {
+    const { paths } = await drawn('5 m 300 100 l 400 100 l S 100 100 200 300 300 100 c S 300 100 l 400 100 l 400 200 l h 500 300 l S h 300 100 l 400 100 l S 300 100 l S');
+    expect(paths).toHaveLength(4); // the last has one point only
+    near(points(paths[0]), [[300, 300], [400, 300]]);
+    expect(paths[1].subpaths[0].pts).toHaveLength(9);
+    near([points(paths[1])[0], points(paths[1])[8]], [[100, 300], [300, 300]]); // the first control point
+    expect(paths[2].subpaths.map(s => s.closed)).toEqual([true, false]);
+    near(points(paths[2]), [[300, 300], [400, 300], [400, 200], [300, 300], [500, 100]]);
+    near(points(paths[3]), [[300, 300], [400, 300]]);
+  });
+
   it('all eight painting operators', async () => {
     const { paths } = await drawn(['S', 's', 'f', 'f*', 'B', 'B*', 'b', 'b*', 'n'].map(op => `0 0 m 9 0 l 9 9 l ${op}`).join(' '));
     expect(paths.map(p => [p.fill, p.stroke, p.evenOdd].map(Number).join(''))).toEqual(['010', '010', '100', '101', '110', '111', '110', '111']);
@@ -274,6 +391,11 @@ describe('paths', () => {
       resources: '/ExtGState<</G<</LW 7/D[[2 2] 0]>>/H<</ca 0/CA 0>>>>',
     });
     expect(paths.map(p => [p.lineWidth, p.dashed])).toEqual([[6, false], [1, true], [7, true]]);
+  });
+
+  it('a line turned by any angle keeps its width', async () => {
+    const { paths } = await drawn('3 w 0.6 0.8 -0.8 0.6 100 100 cm 0 0 m 9 9 l S');
+    expect(paths[0].lineWidth).toBeCloseTo(3, 6);
   });
 
   it('alpha 0 hides only the fill or only the stroke', async () => {
@@ -312,10 +434,29 @@ describe('paths', () => {
     expect([...paths.flatMap(points), ...page.clips.flat().flatMap(c => c.rings).flat()].flat().every(Number.isFinite)).toBe(true);
     expect(page.clips[1][1].rings[0]).toHaveLength(4);
 
+    // a curve with such a point is left out whole, and the next one starts where the last point was
+    const curves = await drawn(`0 0 m 5 5 l ${huge} 1 2 2 3 3 c 9 9 l S 0 0 m 5 5 l ${huge} 1 2 2 3 3 c 15 5 25 5 35 5 c S`);
+    expect(curves.paths.map(p => [p.subpaths[0].curved, points(p).length])).toEqual([[false, 3], [true, 10]]);
+    near([points(curves.paths[1])[2]], [[8.75, 395]]);
+
     const scale = `1${'0'.repeat(300)}`; // x or y alone leaves the range of a number
     const scaled = await drawn(`q ${scale} 0 0 1 0 0 cm 0 1 m 99999999999 2 l 0 3 l S Q q 1 0 0 ${scale} 0 0 cm 1 0 m 2 99999999999 l 3 0 l S Q`);
     expect(scaled.paths.map(p => points(p).length)).toEqual([2, 2]);
     expect(scaled.paths.flatMap(points).flat().every(Number.isFinite)).toBe(true);
+  });
+
+  it('no number that leaves is infinite: widths, texts, points and clips', async () => {
+    const huge = '9'.repeat(400);
+    const scale = `1${'0'.repeat(200)}`;
+    const { page, paths } = await drawn(
+      `2 w ${huge} w 0 0 m 9 9 l S /G gs 0 0 m 9 9 l S q ${scale} 0 0 ${scale} 0 0 cm 0 0 m 0 0 l S Q
+       BT /F 12 Tf 1 0 0 1 ${huge} 300 Tm (far) Tj ET BT /F ${huge} Tf 1 0 0 1 10 300 Tm (tall) Tj ET BT /F 12 Tf 1 0 0 1 10 200 Tm (kept) Tj ET`,
+      { resources: `/Font<</F<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>>>/ExtGState<</G<</LW ${huge}>>>>` },
+    );
+    expect(paths.map(p => p.lineWidth)).toEqual([2, 2, 0]); // a canvas keeps its width when it is given none
+    expect(page.texts).toEqual([{ str: 'kept', at: [10, 200], heightPt: 12 }]);
+    const finite = (value: unknown): boolean => (typeof value === 'number' ? Number.isFinite(value) : typeof value !== 'object' || value === null || Object.values(value).every(finite));
+    expect(finite(page)).toBe(true);
   });
 
   it('a form placed beyond all numbers hides its content', async () => {
@@ -329,8 +470,8 @@ describe('paths', () => {
   });
 
   it('a dash or an alpha that is no number does not refuse the page or hide the path', async () => {
-    const { paths } = await drawn('/D gs /A gs 0 0 9 9 re B', { resources: '/ExtGState<</D<</D[/x 0]>>/A<</ca/x/CA/x>>>>' });
-    expect(paths.map(p => [p.fill, p.stroke, p.dashed])).toEqual([[true, true, false]]);
+    const { paths } = await drawn('[3] 0 d /D gs 0 0 9 9 re B [3] 0 d /N gs /A gs 0 0 9 9 re B', { resources: '/ExtGState<</D<</D[/x 0]>>/N<</D null>>/A<</ca/x/CA/x>>>>' });
+    expect(paths.map(p => [p.fill, p.stroke, p.dashed])).toEqual([[true, true, false], [true, true, false]]);
   });
 
   it('annotations are not read', async () => {

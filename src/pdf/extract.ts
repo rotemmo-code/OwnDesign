@@ -78,6 +78,7 @@ export async function extractPage(pdfjs: Pdfjs, doc: PDFDocumentProxy, pageNo: n
   try {
     page = await doc.getPage(pageNo);
     const view = page.getViewport({ scale: 1 });
+    if (!isFinitePoint([view.width, view.height])) return refuse('corrupt'); // no number that leaves is infinite
     const groups = await doc.getOptionalContentConfig();
     const operators = await page.getOperatorList({ annotationMode: pdfjs.AnnotationMode.DISABLE });
     const drawing = readPaths(pdfjs, operators, view, groups);
@@ -92,7 +93,9 @@ export async function extractPage(pdfjs: Pdfjs, doc: PDFDocumentProxy, pageNo: n
         heightPt: view.height,
         rotation: view.rotation,
         ...drawing,
-        texts: items.flatMap(item => ('str' in item ? [{ str: item.str, at: at(item.transform[4], item.transform[5]), heightPt: item.height * view.userUnit }] : [])),
+        texts: items
+          .flatMap(item => ('str' in item ? [{ str: item.str, at: at(item.transform[4], item.transform[5]), heightPt: item.height * view.userUnit }] : []))
+          .filter(text => isFinitePoint(text.at) && Number.isFinite(text.heightPt)),
         layers: [...groups].flatMap(([, group]): string[] => group.name ?? []),
         colours: summariseColours(drawing.paths),
       },
@@ -106,8 +109,21 @@ export async function extractPage(pdfjs: Pdfjs, doc: PDFDocumentProxy, pageNo: n
 
 type Matrix = number[];
 type Box = [left: number, top: number, right: number, bottom: number];
-/** A colour of null is transparent. */
-type State = { ctm: Matrix; fill: string | null; stroke: string | null; width: number; dashed: boolean; fillAlpha: number; strokeAlpha: number; clipId: number };
+type State = {
+  ctm: Matrix;
+  fill: string | null; // null is transparent
+  stroke: string | null;
+  width: number;
+  dashed: boolean;
+  clipId: number;
+  fillAlpha: number;
+  strokeAlpha: number;
+  blend: string;
+  masked: boolean; // under a soft mask
+  knockout: boolean; // straight inside a knockout group
+};
+/** What the page starts with, and every group that is painted apart. */
+const PLAIN = { fillAlpha: 1, strokeAlpha: 1, blend: 'source-over', masked: false, knockout: false };
 
 const pointAt =
   (pdfjs: Pdfjs, matrix: Matrix) =>
@@ -134,7 +150,7 @@ function boxOf(rings: Vec[][]): Box {
 }
 const meet = (a: Box, b: Box): Box => [Math.max(a[0], b[0]), Math.max(a[1], b[1]), Math.min(a[2], b[2]), Math.min(a[3], b[3])];
 
-/** The paths in drawing order, or null when the page paints more than MAX_PATHS of them or nests its clips beyond use. */
+/** The paths in drawing order, or null when the page paints more than MAX_PATHS of them. */
 function readPaths(
   pdfjs: Pdfjs,
   { fnArray, argsArray }: Awaited<ReturnType<PDFPageProxy['getOperatorList']>>,
@@ -147,11 +163,17 @@ function readPaths(
   const strokes = new Set([OPS.stroke, OPS.closeStroke, ...fillAndStroke]);
   const evenOdds = new Set([OPS.eoFill, OPS.eoFillStroke, OPS.closeEOFillStroke]);
 
-  let s: State = { ctm: view.transform, fill: '#000000', stroke: '#000000', width: 1, dashed: false, fillAlpha: 1, strokeAlpha: 1, clipId: 0 };
+  let s: State = { ctm: view.transform, fill: '#000000', stroke: '#000000', width: 1, dashed: false, clipId: 0, ...PLAIN };
   const saved: State[] = [];
   const save = () => saved.push({ ...s });
   const restore = () => {
-    s = saved.pop() ?? s;
+    const last = saved.pop();
+    if (!last) return;
+    s = last;
+    pendingClip = null; // as pdf.js does
+  };
+  const setWidth = (width: number) => {
+    if (Number.isFinite(width)) s.width = width; // a canvas ignores any other
   };
   const setDash = (dashes: unknown) => {
     s.dashed = Array.isArray(dashes) && dashes.some(d => d > 0);
@@ -159,16 +181,14 @@ function readPaths(
 
   const rectangle = ([left, top, right, bottom]: Box, matrix: Matrix): Vec[][] => {
     const at = pointAt(pdfjs, matrix);
-    return [[at(left, top), at(right, top), at(right, bottom), at(left, bottom)].filter(isFinitePoint)];
+    return [[at(left, top), at(right, top), at(right, bottom), at(left, bottom)].filter(isFinitePoint)]; // a point beyond all numbers is dropped
   };
   const pageBox: Box = [0, 0, view.width, view.height];
   const clips: Clip[][] = [[{ rings: rectangle(pageBox, [1, 0, 0, 1, 0, 0]), evenOdd: false }]];
   const clipBoxes = [pageBox];
-  let clipEntries = 0;
   const addClip = (rings: Vec[][], evenOdd: boolean) => {
-    const list = [...clips[s.clipId], { rings, evenOdd }];
-    clipEntries += list.length;
-    clips.push(list);
+    // shortcut: clips inside clips cost the square of their depth, let a list name its parent if a real file nests thousands
+    clips.push([...clips[s.clipId], { rings, evenOdd }]);
     clipBoxes.push(meet(clipBoxes[s.clipId], boxOf(rings)));
     s.clipId = clips.length - 1;
   };
@@ -205,14 +225,20 @@ function readPaths(
         const [matrix, bbox] = args;
         save();
         if (matrix) s.ctm = Util.transform(s.ctm, matrix);
-        if (bbox) addClip(rectangle(bbox, s.ctm), false);
+        if (bbox) {
+          addClip(rectangle(bbox, s.ctm), false);
+          if (pendingClip) addClip([], false); // between W and its path pdf.js clips this form to nothing
+        }
         break;
       }
       case OPS.beginGroup: {
-        const [{ matrix, bbox, smask }] = args;
+        const [{ matrix, bbox, smask, isolated, knockout, needsIsolation, hasSoftMask, isGray }] = args;
         save();
-        enter(smask ? { ...content, visible: false } : content);
         if (bbox) addClip(rectangle(bbox, matrix ? Util.transform(s.ctm, matrix) : s.ctm), false);
+        enter(smask || s.fillAlpha === 0 ? { ...content, visible: false } : content);
+        // pdf.js paints such a group straight onto the page. Any other starts afresh and is laid on the page with the fill alpha outside it.
+        const direct = s.fillAlpha === 1 && s.blend === PLAIN.blend && !s.masked && !s.knockout && !knockout && !isGray && (!needsIsolation || (!isolated && !hasSoftMask));
+        if (!direct) Object.assign(s, PLAIN, { knockout: !!knockout });
         break;
       }
       case OPS.endGroup:
@@ -239,17 +265,19 @@ function readPaths(
         s.stroke = null;
         break;
       case OPS.setLineWidth:
-        s.width = args[0];
+        setWidth(args[0]);
         break;
       case OPS.setDash:
         setDash(args[0]);
         break;
       case OPS.setGState:
         for (const [key, value] of args[0]) {
-          if (key === 'LW') s.width = value;
-          else if (key === 'D') setDash(value[0]);
+          if (key === 'LW') setWidth(value);
+          else if (key === 'D') setDash(value?.[0]);
           else if (key === 'ca') s.fillAlpha = value;
           else if (key === 'CA') s.strokeAlpha = value;
+          else if (key === 'BM') s.blend = value;
+          else if (key === 'SMask') s.masked = value && content.visible; // on a layer that is off pdf.js has no mask to set
         }
         break;
 
@@ -257,14 +285,17 @@ function readPaths(
         enter(content);
         break;
       case OPS.beginMarkedContentProps: {
-        const group = args[0] === 'OC' ? args[1] : null; // a group, a membership of several groups, or neither
-        enter({ visible: content.visible && (!group || groups.isVisible(group)), layer: groups.getGroup(group?.id ?? group?.ids?.[0])?.name ?? content.layer });
+        const group = args[0] === 'OC' ? args[1] : null; // a group, a membership of several groups by list or by expression, or neither
+        const members: string[] = group?.ids ?? group?.expression?.flat(Infinity) ?? [];
+        const layer = groups.getGroup(group?.id ?? members.find(id => groups.getGroup(id)))?.name;
+        enter({ visible: content.visible && (!group || groups.isVisible(group)), layer: layer ?? content.layer });
         break;
       }
       case OPS.endMarkedContent:
         leave();
         break;
 
+      // Text used as a clip (7 Tr) is not followed.
       case OPS.clip:
         pendingClip = { evenOdd: false };
         break;
@@ -278,7 +309,8 @@ function readPaths(
         const rings = subpaths.map(sub => sub.pts);
         const fill = fills.has(paint) && s.fill !== null && s.fillAlpha !== 0;
         const stroke = strokes.has(paint) && s.stroke !== null && s.strokeAlpha !== 0;
-        const lineWidth = s.width * Math.sqrt(Math.abs(s.ctm[0] * s.ctm[3] - s.ctm[1] * s.ctm[2]));
+        const scaledWidth = s.width * Math.sqrt(Math.abs(s.ctm[0] * s.ctm[3] - s.ctm[1] * s.ctm[2]));
+        const lineWidth = Number.isFinite(scaledWidth) ? scaledWidth : 0;
         // Only what can be seen is read: detection and snapping must not use lines the user does not see.
         if ((fill || stroke) && content.visible && touches(clipBoxes[s.clipId], boxOf(rings), stroke ? lineWidth / 2 : 0)) {
           paths.push({
@@ -299,7 +331,6 @@ function readPaths(
         break;
       }
     }
-    if (clipEntries > 10 * MAX_PATHS) return null; // clips inside clips: their lists grow with the square of the depth
   }
   return { paths, clips };
 }
@@ -317,48 +348,52 @@ const CURVE = 2;
 const CLOSE = 4;
 const CURVE_SEGMENTS = 8;
 
+/** Follows a canvas: a point that is no number is dropped, and a path that begins without a move begins at its first point. */
 function subpathsOf(data: Float32Array, at: (x: number, y: number) => Vec): SubPath[] {
   const subpaths: SubPath[] = [];
-  let i = 0;
-  const take = (n: number) => data.subarray(i, (i += n));
-  let [x, y] = [0, 0];
-  let start = [0, 0];
-  const begin = (): SubPath => {
-    const begun = { pts: [at(x, y)], closed: false, curved: false };
+  const begin = (first: Vec): SubPath => {
+    const begun = { pts: [at(...first)], closed: false, curved: false };
     subpaths.push(begun);
-    start = [x, y];
     return begun;
   };
-  let sub: SubPath | null = null;
+  let sub: SubPath | null = null; // the open one
+  let start: Vec | null = null;
+  let pen: Vec | null = null;
+  let i = 0;
+  const take = (n: number) => data.subarray(i, (i += n));
   while (i < data.length) {
     const [op] = take(1);
-    if (op === MOVE) {
-      [x, y] = take(2);
-      sub = begin();
-    } else if (op === CLOSE) {
+    if (op === CLOSE) {
       if (sub) sub.closed = true;
       sub = null;
-      [x, y] = start;
-    } else if (op === LINE) {
-      sub ??= begin();
-      [x, y] = take(2);
-      sub.pts.push(at(x, y));
-    } else if (op === CURVE) {
-      sub ??= begin();
+      pen = start;
+      continue;
+    }
+    if (op !== MOVE && op !== LINE && op !== CURVE) throw new Error(`unknown path operator ${op}`);
+    const points = take(op === CURVE ? 6 : 2);
+    if (!points.every(Number.isFinite)) continue; // a coordinate beyond 32 bits arrives as Infinity: the point is dropped
+    const [x1, y1, x2, y2, x3, y3] = points;
+    if (op === MOVE || !pen) {
+      start = pen = [x1, y1];
+      sub = begin(pen);
+      if (op !== CURVE) continue;
+    }
+    sub ??= begin(pen); // goes on after a close
+    if (op === LINE) {
+      pen = [x1, y1];
+      sub.pts.push(at(...pen));
+    } else {
       sub.curved = true;
-      const [x1, y1, x2, y2, x3, y3] = take(6);
       for (let k = 1; k <= CURVE_SEGMENTS; k++) {
         const t = k / CURVE_SEGMENTS;
         const u = 1 - t;
         const [a, b, c, d] = [u ** 3, 3 * u * u * t, 3 * u * t * t, t ** 3];
-        sub.pts.push(at(a * x + b * x1 + c * x2 + d * x3, a * y + b * y1 + c * y2 + d * y3));
+        sub.pts.push(at(a * pen[0] + b * x1 + c * x2 + d * x3, a * pen[1] + b * y1 + c * y2 + d * y3));
       }
-      [x, y] = [x3, y3];
-    } else {
-      throw new Error(`unknown path operator ${op}`);
+      pen = [x3, y3];
     }
   }
-  for (const each of subpaths) each.pts = each.pts.filter(isFinitePoint); // a coordinate beyond 32 bits arrives as Infinity
+  for (const each of subpaths) each.pts = each.pts.filter(isFinitePoint); // the matrix can take a point beyond all numbers too: dropped
   return subpaths.filter(({ pts }) => pts.length > 1);
 }
 
