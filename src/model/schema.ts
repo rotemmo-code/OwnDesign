@@ -26,6 +26,16 @@ export const CAPS = {
   /** mm, either side of 0. */
   coordinate: 1e6,
 } as const;
+/** Limits of single values, in mm. The model's actions use the same ones. */
+export const LIMITS = {
+  wallLength: 10,
+  thicknessMin: 20,
+  thicknessMax: 1_000,
+  finishMax: 200,
+  separatorLength: 1,
+  /** Taken off the least lengths, so that exactly 10 mm passes at every angle. */
+  tolerance: 0.01,
+} as const;
 
 const mm = z.number().min(-CAPS.coordinate).max(CAPS.coordinate);
 const positive = z.number().positive().max(CAPS.coordinate);
@@ -37,39 +47,18 @@ const id = z
   .string()
   .regex(/^[a-z0-9-]{1,40}$/)
   .refine(s => s !== 'none' && s !== 'constructor', 'reserved id');
-const long = (least: number) => (line: { a: Pt; b: Pt }) => Math.hypot(line.b.x - line.a.x, line.b.y - line.a.y) >= least;
+const long = (least: number) => (line: { a: Pt; b: Pt }) =>
+  Math.hypot(line.b.x - line.a.x, line.b.y - line.a.y) >= least - LIMITS.tolerance;
 const unique = (values: string[]) => new Set(values).size === values.length;
 
-/**
- * Stops at the first bad item. zod would keep an issue for each of them: a hostile file could fill the memory, and from
- * about 120,000 issues safeParse throws instead of answering.
- */
-function take<S extends z.ZodType>(item: S, values: Iterable<unknown>, ctx: z.RefinementCtx): z.output<S>[] {
-  const taken: z.output<S>[] = [];
-  for (const value of values) {
-    const result = item.safeParse(value);
-    if (!result.success) {
-      ctx.addIssue('invalid item');
-      break;
-    }
-    taken.push(result.data);
-  }
-  return taken;
-}
-const list = <S extends z.ZodType>(item: S, max: number) =>
-  z
-    .array(z.unknown())
-    .max(max)
-    .transform((values, ctx) => take(item, values, ctx));
-
 const status = z.enum(['kept', 'removed', 'new', 'moved']).optional();
-const finish = z.number().int().min(1).max(200).nullable();
+const finish = z.number().int().min(1).max(LIMITS.finishMax).nullable();
 const wall = z
   .strictObject({
     id,
     a: pt,
     b: pt,
-    thickness: z.number().min(20).max(1000),
+    thickness: z.number().min(LIMITS.thicknessMin).max(LIMITS.thicknessMax),
     finishA: finish,
     finishB: finish,
     source: z.enum(['detected', 'manual']),
@@ -77,7 +66,7 @@ const wall = z
     status,
     from: z.strictObject({ a: pt, b: pt }).optional(),
   })
-  .refine(long(10), 'wall shorter than 10 mm');
+  .refine(long(LIMITS.wallLength), 'wall too short');
 const opening = z.strictObject({
   id,
   wallId: id,
@@ -85,17 +74,18 @@ const opening = z.strictObject({
   width: positive,
   kind: z.enum(['door', 'entry', 'window', 'passage']),
   review: z.boolean(),
+  confirmed: z.boolean(),
   status,
   fromOffset: mm.optional(),
 });
-const separator = z.strictObject({ id, a: pt, b: pt }).refine(long(1), 'separator shorter than 1 mm');
+const separator = z.strictObject({ id, a: pt, b: pt }).refine(long(LIMITS.separatorLength), 'separator too short');
 const ring = z.array(pt).min(3).max(CAPS.points);
 const room = z
   .strictObject({
     id,
     name,
     boundary: ring,
-    holes: list(ring, CAPS.holes),
+    holes: z.array(ring).max(CAPS.holes),
     isMamad: z.boolean(),
     inApartment: z.boolean(),
     outdoor: z.boolean(),
@@ -103,10 +93,10 @@ const room = z
   .refine(r => !(r.isMamad && r.outdoor), 'the mamad cannot be outdoors');
 const state = z
   .strictObject({
-    walls: list(wall, CAPS.walls),
-    openings: list(opening, CAPS.openings),
-    separators: list(separator, CAPS.separators),
-    rooms: list(room, CAPS.rooms),
+    walls: z.array(wall).max(CAPS.walls),
+    openings: z.array(opening).max(CAPS.openings),
+    separators: z.array(separator).max(CAPS.separators),
+    rooms: z.array(room).max(CAPS.rooms),
   })
   .refine(s => unique([...s.walls, ...s.openings, ...s.separators, ...s.rooms].map(x => x.id)), 'id used twice')
   .refine(s => {
@@ -114,51 +104,56 @@ const state = z
     return s.openings.every(o => walls.has(o.wallId));
   }, 'opening without a wall')
   .refine(s => s.rooms.filter(r => r.isMamad).length <= 1, 'more than one mamad');
-const classEntry = z.tuple([id, z.enum(['fixed', 'changeable', 'unknown'])]);
-const wallClass = z
-  .record(z.string(), z.unknown())
-  .transform((classes, ctx) => Object.fromEntries(take(classEntry, Object.entries(classes), ctx)));
+const existingState = state.refine(
+  s =>
+    s.walls.every(w => w.status === undefined && w.from === undefined) &&
+    s.openings.every(o => o.status === undefined && o.fromOffset === undefined),
+  'planned change in the existing state',
+);
+const plannedState = state.refine(
+  s => [...s.walls, ...s.openings].every(x => x.status !== undefined),
+  'planned item without a status',
+);
+const wallClass = z.record(id, z.enum(['fixed', 'changeable', 'unknown']));
 
 export const ProjectSchema = z
   .strictObject({
     version: z.literal(1),
     name,
-    pdfBase64: z
-      .string()
-      .max(Math.ceil(MAX_FILE_BYTES / 3) * 4)
-      .regex(/^[A-Za-z0-9+/]*={0,2}$/),
+    pdfBase64: z.base64().max(Math.ceil(MAX_FILE_BYTES / 3) * 4),
     page: z.number().int().min(1).max(MAX_PAGES),
     calibration: z.strictObject({
       scale: positive,
       mmPerPt: positive,
       offsetMm: mm,
       chosen: z.literal([50, 100]),
-      dims: list(z.strictObject({ a: vec, b: vec, writtenMm: mm }), CAPS.dims),
+      dims: z.array(z.strictObject({ a: vec, b: vec, writtenMm: mm })).max(CAPS.dims),
       verified: z.boolean(),
     }),
     plaster: z.enum(['none', 'line', 'inWall', 'unknown']).nullable(),
     wallClass,
-    existing: state,
+    existing: existingState,
     approved: z.boolean(),
     mamad: z.union([z.literal('none'), id]).nullable(),
-    planned: state.nullable(),
-    plannedArchive: list(z.strictObject({ savedAt: z.string().max(40), state, wallClass }), CAPS.archive),
+    planned: plannedState.nullable(),
+    plannedArchive: z.array(z.strictObject({ savedAt: z.string(), state: plannedState, wallClass })).max(CAPS.archive),
     changeableWarningShown: z.boolean(),
-    clouds: list(
-      z.strictObject({ id, a: pt, b: pt, note: z.string().max(CAPS.note), source: z.enum(['manual', 'suggested']) }),
-      CAPS.clouds,
-    ).refine(clouds => unique(clouds.map(c => c.id)), 'cloud id used twice'),
-    sourceColors: list(z.strictObject({ hex: z.string().regex(/^#[0-9a-f]{6}$/), label: name }), CAPS.colors).refine(
-      colors => unique(colors.map(c => c.hex)),
-      'colour listed twice',
-    ),
+    clouds: z
+      .array(z.strictObject({ id, a: pt, b: pt, note: z.string().max(CAPS.note), source: z.enum(['manual', 'suggested']) }))
+      .max(CAPS.clouds)
+      .refine(clouds => unique(clouds.map(c => c.id)), 'cloud id used twice'),
+    sourceColors: z
+      .array(z.strictObject({ hex: z.string().regex(/^#[0-9a-f]{6}$/), label: name }))
+      .max(CAPS.colors)
+      .refine(colors => unique(colors.map(c => c.hex)), 'colour listed twice'),
   })
   .refine(p => {
     const answer = p.mamad === 'none' ? null : p.mamad;
     const marked = p.existing.rooms.find(r => r.isMamad)?.id ?? null;
     return marked === answer && (p.planned === null || p.planned.rooms.some(r => r.isMamad) === (answer !== null));
   }, 'the mamad does not match the rooms')
-  .refine(p => p.planned === null || p.approved, 'a plan without an approved existing state');
+  .refine(p => p.planned === null || p.approved, 'a plan without an approved existing state')
+  .refine(p => !p.approved || p.mamad !== null, 'approved without an answer about the mamad');
 
 /** Compile-time: the schema and the types are the same type, optional fields included. */
 type Same<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;

@@ -26,6 +26,7 @@ const opening = (id: string, wallId: string, offset: number, width: number, kind
   width,
   kind,
   review: false,
+  confirmed: true,
 });
 
 const room = (id: string, name: string, boundary: Pt[]): Room => ({

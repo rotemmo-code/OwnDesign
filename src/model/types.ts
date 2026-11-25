@@ -38,7 +38,10 @@ export type Opening = {
   offset: number;
   width: number;
   kind: 'door' | 'entry' | 'window' | 'passage';
+  /** The detector doubts it. */
   review: boolean;
+  /** The designer approved place, size and kind; manual ones are confirmed. */
+  confirmed: boolean;
   status?: Status;
   fromOffset?: number;
 };
@@ -135,10 +138,13 @@ export type Action =
   | { type: 'x.addSeparator'; a: Pt; b: Pt }
   | { type: 'x.deleteSeparator'; id: Id }
   | { type: 'x.clearReview'; id: Id }
+  | { type: 'x.confirmOpenings'; ids: Id[] }
   | { type: 'x.setRoom'; id: Id; name?: string; inApartment?: boolean; outdoor?: boolean }
   /** The answer to a split: part takes the id and name of room, and the other way round. */
   | { type: 'x.keepName'; room: Id; part: Id }
-  | { type: 'setMamad'; room: Id | 'none' }
+  /** null opens the question again. */
+  | { type: 'setMamad'; room: Id | 'none' | null }
+  | { type: 'setName'; name: string }
   | { type: 'classify'; wallId: Id; cls: WallClass }
   /** Everything drawn is scaled by the new mmPerPt over the old one. */
   | { type: 'rescale'; calibration: Calibration }
