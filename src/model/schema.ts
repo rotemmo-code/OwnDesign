@@ -115,6 +115,14 @@ const plannedState = state.refine(
   'planned item without a status',
 );
 const wallClass = z.record(id, z.enum(['fixed', 'changeable', 'unknown']));
+const calibration = z.strictObject({
+  scale: positive,
+  mmPerPt: positive,
+  offsetMm: mm,
+  chosen: z.literal([50, 100]),
+  dims: z.array(z.strictObject({ a: vec, b: vec, writtenMm: mm })).max(CAPS.dims),
+  verified: z.boolean(),
+});
 
 export const ProjectSchema = z
   .strictObject({
@@ -122,21 +130,14 @@ export const ProjectSchema = z
     name,
     pdfBase64: z.base64().max(Math.ceil(MAX_FILE_BYTES / 3) * 4),
     page: z.number().int().min(1).max(MAX_PAGES),
-    calibration: z.strictObject({
-      scale: positive,
-      mmPerPt: positive,
-      offsetMm: mm,
-      chosen: z.literal([50, 100]),
-      dims: z.array(z.strictObject({ a: vec, b: vec, writtenMm: mm })).max(CAPS.dims),
-      verified: z.boolean(),
-    }),
+    calibration,
     plaster: z.enum(['none', 'line', 'inWall', 'unknown']).nullable(),
     wallClass,
     existing: existingState,
     approved: z.boolean(),
     mamad: z.union([z.literal('none'), id]).nullable(),
     planned: plannedState.nullable(),
-    plannedArchive: z.array(z.strictObject({ savedAt: z.string(), state: plannedState, wallClass })).max(CAPS.archive),
+    plannedArchive: z.array(z.strictObject({ savedAt: z.string(), state: plannedState, wallClass, calibration })).max(CAPS.archive),
     changeableWarningShown: z.boolean(),
     clouds: z
       .array(z.strictObject({ id, a: pt, b: pt, note: z.string().max(CAPS.note), source: z.enum(['manual', 'suggested']) }))

@@ -47,7 +47,7 @@ const withPlan: Change = p => {
   marked(p.existing, 'room-b');
   p.planned = plan(p);
 };
-const archived = (p: Project) => ({ savedAt: new Date(0).toISOString(), state: plan(p), wallClass: {} });
+const archived = (p: Project) => ({ savedAt: new Date(0).toISOString(), state: plan(p), wallClass: {}, calibration: structuredClone(p.calibration) });
 
 /** Every optional field and every list in use. */
 function fullProject(): Project {
@@ -64,7 +64,7 @@ function fullProject(): Project {
     calibration: { ...p.calibration, dims: [{ a: [0, 0], b: [100, 50], writtenMm: 1970 }], verified: false },
     plaster: 'inWall',
     wallClass: { part: 'changeable', top: 'fixed', left: 'unknown' },
-    plannedArchive: [{ ...archived(p), state: structuredClone(planned), wallClass: { part: 'changeable' } }],
+    plannedArchive: [{ ...archived(p), state: structuredClone(planned), wallClass: { part: 'changeable' }, calibration: { scale: 100, mmPerPt: (100 * 25.4) / 72, offsetMm: 30, chosen: 100, dims: [], verified: true } }],
     changeableWarningShown: true,
     clouds: [{ ...line('cloud', 9), note: 'x', source: 'manual' }],
     sourceColors: [{ hex: '#c0ffee', label: 'x' }],
@@ -274,15 +274,21 @@ it('an outline has 3 to 2,000 points, holes too', () => {
 });
 
 it('calibration: verified is required, chosen is 50 or 100, scale is positive', () => {
-  expect(each([true, false, undefined, 'true', 1], v => p => (p.calibration.verified = v))).toEqual([true, true, false, false, false]);
-  expect(ok(p => delete p.calibration.verified)).toBe(false);
-  expect(each([50, 100, 75, '50'], v => p => (p.calibration.chosen = v))).toEqual([true, true, false, false]);
-  for (const key of ['scale', 'mmPerPt']) expect(each([0.1, 0, -1], v => p => (p.calibration[key] = v)), key).toEqual([true, false, false]);
-  expect(each([-80, 100], v => p => (p.calibration.offsetMm = v))).toEqual([true, true]);
   const dim = { a: [0, 0], b: [1, 1], writtenMm: 1 };
-  expect(each([0, 200, 201], n => p => (p.calibration.dims = many(n, () => dim)))).toEqual([true, true, false]);
-  expect(each([[0], [0, 0, 0], { x: 0, y: 0 }], a => p => (p.calibration.dims = [{ ...dim, a }]))).toEqual([false, false, false]);
-  expect(each([-1, 0, 1970], writtenMm => p => (p.calibration.dims = [{ ...dim, writtenMm }]))).toEqual([true, true, true]); // which ones count is for the fit to say
+  // the project's, and the one an archived plan was saved with
+  const places: ((p: any) => any)[] = [p => p.calibration, p => (p.plannedArchive = [archived(p)])[0].calibration];
+  for (const at of places) {
+    expect(each([true, false, undefined, 'true', 1], v => p => (at(p).verified = v))).toEqual([true, true, false, false, false]);
+    expect(ok(p => delete at(p).verified)).toBe(false);
+    expect(each([50, 100, 75, '50'], v => p => (at(p).chosen = v))).toEqual([true, true, false, false]);
+    for (const key of ['scale', 'mmPerPt']) expect(each([0.1, 0, -1], v => p => (at(p)[key] = v)), key).toEqual([true, false, false]);
+    expect(each([-80, 100], v => p => (at(p).offsetMm = v))).toEqual([true, true]);
+    expect(each([0, 200, 201], n => p => (at(p).dims = many(n, () => dim)))).toEqual([true, true, false]);
+    expect(each([[0], [0, 0, 0], { x: 0, y: 0 }], a => p => (at(p).dims = [{ ...dim, a }]))).toEqual([false, false, false]);
+    expect(each([-1, 0, 1970], writtenMm => p => (at(p).dims = [{ ...dim, writtenMm }]))).toEqual([true, true, true]); // which ones count is for the fit to say
+    expect(ok(p => (at(p).extra = 1))).toBe(false);
+  }
+  expect(each([undefined, null, {}], calibration => p => (p.calibration = calibration))).toEqual([false, false, false]);
 });
 
 it('plaster: four answers or null', () => {
@@ -375,6 +381,8 @@ it('archive: 200 entries, each a full state', () => {
   // savedAt is any text; the model writes toISOString
   expect(each([new Date().toISOString(), String(new Date(0)), ''], savedAt => p => (p.plannedArchive = [{ ...archived(p), savedAt }]))).toEqual([true, true, true]);
   expect(each([undefined, null, 0], savedAt => p => (p.plannedArchive = [{ ...archived(p), savedAt }]))).toEqual([false, false, false]);
+  expect(each([undefined, null, {}], calibration => p => (p.plannedArchive = [{ ...archived(p), calibration }]))).toEqual([false, false, false]);
+  expect(ok(p => delete (p.plannedArchive = [archived(p)] as any)[0].calibration)).toBe(false);
 });
 
 it('never calls Function or eval (the CSP forbids both)', () => {

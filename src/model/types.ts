@@ -81,7 +81,8 @@ export type Project = {
   /** The answer to the question which room is the mamad. null: not answered. */
   mamad: Id | 'none' | null;
   planned: State | null;
-  plannedArchive: { savedAt: string; state: State; wallClass: Record<Id, WallClass> }[];
+  /** Read-only. Each plan keeps the calibration it was saved with, whatever the project's is now. */
+  plannedArchive: { savedAt: string; state: State; wallClass: Record<Id, WallClass>; calibration: Calibration }[];
   changeableWarningShown: boolean;
   clouds: Cloud[];
   sourceColors: SourceColor[];
