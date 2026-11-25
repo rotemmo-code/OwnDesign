@@ -29,12 +29,14 @@ it('kept and moved walls are solid, an added wall is hatched, a removed wall is 
   expect(KIND_STYLE.removed).toEqual({ fill: 'none', dashed: true });
 });
 
-it('no colour literal exists in src/ outside theme.ts', () => {
+it('no colour literal exists in src/ outside theme.ts, src/pdf/ and src/detect/', () => {
   const literal = /#(?:[\da-f]{8}|[\da-f]{6}|[\da-f]{3,4})\b|\b(?:rgb|hsl)a?\(/gi;
   expect('#fff #1F4E79 #80808080 rgb(1 hsla(2'.match(literal)).toHaveLength(5);
   expect('#root'.match(literal)).toBeNull();
   const src = path.join(import.meta.dirname, '../../src');
-  const files = readdirSync(src, { recursive: true, encoding: 'utf8' }).filter(f => /\.(tsx?|css)$/.test(f) && f !== 'theme.ts');
+  // src/pdf/ and src/detect/ name the drawing's own grays
+  const files = readdirSync(src, { recursive: true, encoding: 'utf8' }).filter(f => /\.(tsx?|css)$/.test(f) && f !== 'theme.ts' && !/^(pdf|detect)[\\/]/.test(f));
   expect(files).toContain('main.tsx');
+  expect(files).toContain(path.join('editor', 'App.tsx'));
   expect(files.flatMap(f => (readFileSync(path.join(src, f), 'utf8').match(literal) ?? []).map(m => `${f}: ${m}`))).toEqual([]);
 });
