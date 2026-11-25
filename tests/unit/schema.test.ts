@@ -378,9 +378,11 @@ it('archive: 200 entries, each a full state', () => {
   expect(each([0, 200, 201], n => p => (p.plannedArchive = many(n, () => archived(p))))).toEqual([true, true, false]);
   expect(ok(p => (p.plannedArchive = [{ ...archived(p), state: {} }]))).toBe(false);
   expect(ok(p => (p.plannedArchive = [{ ...archived(p), wallClass: { none: 'fixed' } }]))).toBe(false);
-  // savedAt is any text; the model writes toISOString
-  expect(each([new Date().toISOString(), String(new Date(0)), ''], savedAt => p => (p.plannedArchive = [{ ...archived(p), savedAt }]))).toEqual([true, true, true]);
-  expect(each([undefined, null, 0], savedAt => p => (p.plannedArchive = [{ ...archived(p), savedAt }]))).toEqual([false, false, false]);
+  const savedAt = (value: unknown): Change => p => (p.plannedArchive = [{ ...archived(p), savedAt: value }]);
+  expect(each([new Date().toISOString(), '2028-02-29T23:59:59.999Z'], savedAt)).toEqual([true, true]);
+  const digits = '0'.repeat(30_000_000); // an ISO time may have any number of decimals
+  const bad = [String(new Date(0)), '', '2026-11-25', '2026-11-25T10:00Z', '2026-11-25T10:00:00.000', '2026-11-25T10:00:00.000+02:00', '2026-11-25T10:00:00.000Z\n', '2026-02-29T10:00:00.000Z', '2026-11-25T24:00:00.000Z', 'x' + digits, `2026-11-25T10:00:00.${digits}Z`, undefined, null, 0];
+  expect(each(bad, savedAt)).toEqual(Array(bad.length).fill(false));
   expect(each([undefined, null, {}], calibration => p => (p.plannedArchive = [{ ...archived(p), calibration }]))).toEqual([false, false, false]);
   expect(ok(p => delete (p.plannedArchive = [archived(p)] as any)[0].calibration)).toBe(false);
 });

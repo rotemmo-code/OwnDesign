@@ -137,7 +137,10 @@ export const ProjectSchema = z
     approved: z.boolean(),
     mamad: z.union([z.literal('none'), id]).nullable(),
     planned: plannedState.nullable(),
-    plannedArchive: z.array(z.strictObject({ savedAt: z.string(), state: plannedState, wallClass, calibration })).max(CAPS.archive),
+    // precision: what toISOString writes; without it the decimals have no limit
+    plannedArchive: z
+      .array(z.strictObject({ savedAt: z.iso.datetime({ precision: 3 }), state: plannedState, wallClass, calibration }))
+      .max(CAPS.archive),
     changeableWarningShown: z.boolean(),
     clouds: z
       .array(z.strictObject({ id, a: pt, b: pt, note: z.string().max(CAPS.note), source: z.enum(['manual', 'suggested']) }))
