@@ -75,8 +75,9 @@ const HELPERS = `
       tx.onabort = () => reject(tx.error);
     };
   });`;
-/** Loads the probe and claims the draft for this tab; returns the claim. */
-const ready = (page: Page) => page.evaluate(`(async () => { ${HELPERS}; return m.claimDraft(); })()`);
+/** Loads the probe, claims the draft for this tab and, when it is this tab's, looks at it as the app must; returns the claim. */
+const ready = (page: Page) =>
+  page.evaluate(`(async () => { ${HELPERS}; const claim = await m.claimDraft(); if (claim === 'mine') await m.loadDraft(); return claim; })()`);
 const DAY = 86_400_000;
 const T0 = Date.parse('2026-03-01T09:00:00.000Z');
 /** Writes on day 0, then loads on each day given: [savedAt, name or error, expired] per load. One fresh draft per call. */
@@ -333,6 +334,69 @@ test('a broken draft first seen while the clock was a year ahead still expires o
   expect(await days(page, [365, 1, 15.1], broken)).toEqual([fresh(seen), fresh(seen), expired(seen)]);
 });
 
+test('a fresh tab: schedule and clear before the first loadDraft are refused; after it, schedule writes', async ({ page }) => {
+  expect(
+    await page.evaluate(async p => {
+      const probe = await import(/* @vite-ignore */ '/probe.js' as string);
+      const claim = await probe.claimDraft();
+      const early = await new Promise(resolve => probe.scheduleDraft(p, resolve));
+      const clear = await probe.clearDraft().then(() => 'cleared', () => 'refused');
+      const first = await probe.loadDraft();
+      const later = await new Promise(resolve => probe.scheduleDraft(p, resolve));
+      const draft = await probe.loadDraft();
+      return [claim, early, clear, first, later, draft.result.ok && draft.result.project.name];
+    }, named('start')),
+  ).toEqual(['mine', false, 'refused', null, true, 'start']);
+});
+
+test('a refused tab asks again without a reload after the first tab closes, and gets mine', async ({ page, context }) => {
+  expect(await ready(page)).toBe('mine');
+  const second = await context.newPage();
+  await serveProbe(second);
+  expect(await ready(second)).toBe('other-tab');
+  await page.close();
+  await expect.poll(() => second.evaluate(() => m.claimDraft())).toBe('mine');
+});
+
+test('the first tab closes with unsaved work: the second tab cannot write over it or delete it before loading it', async ({ page, context }) => {
+  expect(await ready(page)).toBe('mine');
+  expect(await page.evaluate(p => schedule(p), named('from A'))).toBe(true);
+  const second = await context.newPage();
+  await serveProbe(second);
+  expect(await ready(second)).toBe('other-tab');
+  await page.close();
+  await expect.poll(() => second.evaluate(() => m.claimDraft())).toBe('mine');
+  expect(
+    await second.evaluate(async p => {
+      const early = await schedule(p);
+      const clear = await m.clearDraft().then(() => 'cleared', () => 'refused');
+      const offered = await show(); // the app offers this one: restore or delete
+      const later = await schedule(p);
+      return [early, clear, offered, later, await show()];
+    }, named('from B')),
+  ).toEqual([false, 'refused', 'from A', true, 'from B']);
+});
+
+test.describe('a draft written seconds ago, reopened with the clock a little behind', () => {
+  for (const [behind, flagged] of [
+    ['5 s', false],
+    ['23 h', false],
+    ['2 days', true], // more than a day ahead: the time is ignored, the old kept time counts
+  ] as const) {
+    test(`${behind} behind: ${flagged ? 'flagged expired, as before' : 'fresh'}`, async ({ page }) => {
+      await ready(page);
+      const ms = { '5 s': 5_000, '23 h': 23 * 3_600_000, '2 days': 2 * DAY }[behind];
+      await page.evaluate(() => m.clearDraft());
+      await page.clock.setFixedTime(T0 - 20 * DAY); // a tab left open for 20 days: kept is old
+      await page.evaluate(async p => { await schedule(p); await m.loadDraft(); }, named('old'));
+      await page.clock.setFixedTime(T0);
+      expect(await page.evaluate(p => schedule(p), named('new'))).toBe(true);
+      await page.clock.setFixedTime(T0 - ms);
+      expect(await page.evaluate(async () => { const d = await m.loadDraft(); return [d.result.ok && d.result.project.name, d.expired]; })).toEqual(['new', flagged]);
+    });
+  }
+});
+
 test('claimDraft twice in one tab, at once and one after the other: mine every time, and the draft still works', async ({ page }) => {
   expect(await ready(page)).toBe('mine');
   expect(
@@ -370,6 +434,7 @@ for (const [how, error] of [
             setTimeout(() => ((request.error = new DOMException('blocked', error)), request.onerror?.()));
             return request;
           };
+          await m.clearDraft(); // closes the connection ready() opened, so the next job must open again
           Object.defineProperty(indexedDB, 'open', { value: refuse, configurable: true });
           const failed = [
             await m.loadDraft().then(() => 'loaded', (e: Error) => e.name),

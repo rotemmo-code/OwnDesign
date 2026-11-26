@@ -15,9 +15,13 @@ type Stored = { savedAt: string; model: Omit<Project, 'pdfBase64'> };
 
 type Claim = 'mine' | 'other-tab' | 'unavailable';
 let mine = false;
+/** loadDraft ran under this claim: only then may this tab write over or delete what is stored (it may be another tab's). */
+let looked = false;
 let claim: Promise<Claim> | undefined;
 /**
  * Only the first tab backs up (owner decision 10.2). The other functions refuse in a tab that did not get 'mine'.
+ * Order: claimDraft, then loadDraft (and offer what it returns), then scheduleDraft and clearDraft; before the
+ * first loadDraft these two refuse, so a draft left by a closed tab is never written over or deleted unseen.
  * Calls share one answer, so a second call in the tab that holds the lock (a remount, StrictMode) is 'mine' too;
  * a tab that did not get it may ask again later.
  */
@@ -38,6 +42,7 @@ const requestLock = () =>
       .catch(() => resolve('unavailable'));
   });
 const notMine = () => Promise.reject(new Error('this tab does not hold the draft'));
+const notLooked = () => Promise.reject(new Error('loadDraft has not run in this tab yet'));
 
 let db: IDBDatabase | undefined;
 let stored: string | undefined; // the pdfBase64 the store holds
@@ -93,9 +98,9 @@ async function write(p: Project): Promise<void> {
 
 let timer: ReturnType<typeof setTimeout> | undefined;
 let latest: Project;
-/** A running timer is not restarted, so edits that never pause are still backed up (owner decision 10.7). */
+/** A running timer is not restarted, so edits that never pause are still backed up (owner decision 10.7). done(false) before the first loadDraft. */
 export function scheduleDraft(p: Project, done: (ok: boolean) => void): void {
-  if (!mine) return queueMicrotask(() => done(false));
+  if (!mine || !looked) return queueMicrotask(() => done(false));
   latest = p;
   timer ??= setTimeout(() => {
     timer = undefined;
@@ -115,7 +120,8 @@ const readTime = (value: unknown): number | null => {
 
 /** The one place that decides whether a draft is old. Owner decision: an old draft is flagged, never deleted here. */
 const isExpired = (since: number, now: number) => since !== -Infinity && now - since > KEEP_DAYS * DAY_MS;
-const notAhead = (time: number | null, now: number) => (time !== null && time <= now ? time : -Infinity);
+/** A clock a little behind (up to a day) makes a fresh time look ahead: count it as now. Further ahead: ignored. */
+const notAhead = (time: number | null, now: number) => (time === null || time > now + DAY_MS ? -Infinity : Math.min(time, now));
 
 /**
  * Rejects when storage is blocked. Nothing is ever deleted here: a draft that fails the check (owner decision 10.6) and
@@ -132,6 +138,7 @@ export const loadDraft = (): Promise<Draft | null> => {
       record = store.get('model');
       kept = store.get('kept');
     });
+    looked = true;
     const draft = record.result as Partial<Stored> | null | undefined;
     if (draft === undefined) return null;
     const now = Date.now();
@@ -151,6 +158,7 @@ export const loadDraft = (): Promise<Draft | null> => {
 /** Cancels a waiting write, lets one in progress finish, then deletes the database. */
 export function clearDraft(): Promise<void> {
   if (!mine) return notMine();
+  if (!looked) return notLooked();
   clearTimeout(timer);
   timer = undefined;
   return inTurn(remove);
