@@ -1,5 +1,5 @@
 import { area, contains, corners, dist, intersection, polygon, rings, wallBody } from './geo';
-import { TOUCH } from './join';
+import { LEAST_SINE, TOUCH } from './join';
 import { isExterior } from './kind';
 import { faces, roomsOnSide } from './measure';
 import { live } from './rooms';
@@ -135,32 +135,39 @@ export const mamadAllows = {
     const [from, to] = guarded(k, length(old));
     return onLine(old, w) && along(old, w.a).at <= from + TOL && along(old, w.b).at >= to - TOL;
   },
-  /** w (new or changed) does not run along a wall that bounds the mamad, over its span and corner joints. */
-  lay: (s: State, w: Wall): boolean => {
-    if (length(w) < LIMITS.wallLength - TOL) return true;
-    const body = wallBody(w);
-    const u = { x: (w.b.x - w.a.x) / length(w), y: (w.b.y - w.a.y) / length(w) };
-    return !boundingWalls(s).some(o => {
+  /**
+   * w does not run along a wall that bounds the mamad, over its span and corner joints, by more than 0.01 mm of average
+   * width. With old (a changed wall), only what the change adds counts: an overlap the wall already had is no reason to
+   * lock it.
+   */
+  lay: (s: State, w: Wall, old?: Wall): boolean =>
+    !boundingWalls(s).some(o => {
       if (o.id === w.id) return false;
-      const l = length(o);
-      const v = { x: (o.b.x - o.a.x) / l, y: (o.b.y - o.a.y) / l };
-      if (Math.abs(u.x * v.y - u.y * v.x) >= ALONG) return false;
-      const [from, to] = guarded(mamadSpan(s, o.id)!, l);
-      const at = (t: number) => ({ x: o.a.x + v.x * t, y: o.a.y + v.y * t });
-      const g = intersection(body, polygon(corners(at(from), at(to), o.thickness)));
-      const ats = rings(g).flat().map(q => along(o, q).at);
-      // more than 0.01 mm wide on average over the length they share
-      return ats.length > 0 && area(g) > TOL * (Math.max(...ats) - Math.min(...ats));
-    });
-  },
+      const now = alongShared(s, w, o);
+      return now.area - (old ? alongShared(s, old, o).area : 0) > TOL * now.extent;
+    }),
 };
+/**
+ * The part of w's body inside o's body over o's span and corner joints, when w runs along o (under 15 degrees): its
+ * area, and the length along o it spans, so that the tolerance is an average width.
+ */
+function alongShared(s: State, w: Wall, o: Wall): { area: number; extent: number } {
+  const none = { area: 0, extent: Infinity };
+  const [l, lw] = [length(o), length(w)];
+  if (lw < LIMITS.wallLength - TOL) return none;
+  const v = { x: (o.b.x - o.a.x) / l, y: (o.b.y - o.a.y) / l };
+  if (Math.abs(((w.b.x - w.a.x) * v.y - (w.b.y - w.a.y) * v.x) / lw) >= LEAST_SINE) return none;
+  const [from, to] = guarded(mamadSpan(s, o.id)!, l);
+  const at = (t: number) => ({ x: o.a.x + v.x * t, y: o.a.y + v.y * t });
+  const g = intersection(wallBody(w), polygon(corners(at(from), at(to), o.thickness)));
+  const ats = rings(g).flat().map(q => along(o, q).at);
+  return ats.length ? { area: area(g), extent: Math.max(...ats) - Math.min(...ats) } : none;
+}
 /** The span with the corner joints at both ends, within the wall. */
 const guarded = (k: { from: number; to: number; before: number; after: number }, l: number): [number, number] => [
   Math.max(0, k.from - k.before),
   Math.min(l, k.to + k.after),
 ];
-/** The value of LEAST_SINE in join.ts (not exported there): under it a wall runs along another instead of meeting it. */
-const ALONG = Math.sin((14.99 * Math.PI) / 180);
 const boundingWalls = (s: State): Wall[] => {
   const m = mamadOf(s);
   if (!m) return [];

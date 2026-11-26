@@ -118,7 +118,7 @@ export const existingHandlers: Handlers = {
     if (l < LIMITS.wallLength - TOL) refuse('invalid-geometry');
     // side A stays side A, so a finish never changes sides
     if ((w.b.x - w.a.x) * (old.b.x - old.a.x) + (w.b.y - w.a.y) * (old.b.y - old.a.y) <= 0) refuse('invalid-geometry');
-    mamadLocked(!mamadAllows.set(s, old, w) || wallEntersMamad(s, w) || !mamadAllows.lay(s, w));
+    mamadLocked(!mamadAllows.set(s, old, w) || wallEntersMamad(s, w) || !mamadAllows.lay(s, w, old));
     // M13: when end a slides along the wall by shift, the openings stay where they are
     const shift = ((w.a.x - old.a.x) * (w.b.x - w.a.x) + (w.a.y - old.a.y) * (w.b.y - w.a.y)) / l;
     const openings = shift ? s.openings.map(o => (o.wallId === w.id ? { ...o, offset: o.offset - shift } : o)) : s.openings;

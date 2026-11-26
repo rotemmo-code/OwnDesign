@@ -769,3 +769,24 @@ it('still allowed next to a mamad wall: a T from the neighbour, a diagonal to it
   const cases = [addWall(P(200, 2000), P(3250, 2000)), addWall(P(7400, -1000), P(6400, 0)), addWall(P(6500, 1000), P(6500, 3000), 200), addWall(P(4000, -100), P(5000, -100), 200)];
   for (const a of cases) sameOutline(p, ok(p, a).project);
 });
+
+// ---- follow-up fix round 2: lay judges what an edit adds ----
+it('a wall that already overlaps a mamad wall\'s joint stays editable; only a grown overlap is refused', () => {
+  const base = boxProject();
+  const walls = [
+    ...base.existing.walls.filter(w => w.id !== 'top'),
+    wall('top-a', 0, 100, 3300, 100, 200),
+    wall('top-b', 3200, 100, 6400, 100, 200),
+  ];
+  const plain: Project = { ...base, existing: { ...base.existing, openings: base.existing.openings.filter(o => o.wallId !== 'top') } };
+  const p = mamadOn('room-b', withWalls(plain, walls));
+  expect(wallBoundsMamad(p.existing, 'top-a')).toBe(false);
+  sameOutline(p, ok(p, { type: 'x.setWall', id: 'top-a', a: P(-50, 100) }).project);
+  sameOutline(p, ok(p, { type: 'x.setWall', id: 'top-a', thickness: 220 }).project);
+  expect(why(p, { type: 'x.setWall', id: 'top-a', b: P(3400, 100) })).toBe('mamad-locked');
+  expect(why(p, { type: 'x.deleteWall', id: 'top-a' })).toBe('ok');
+  // a thinner wall on the joint, thickened: its overlap grows, refused
+  const thin = mamadOn('room-b', withWalls(plain, walls.map(w => (w.id === 'top-a' ? { ...w, thickness: 100 } : w))));
+  expect(why(thin, { type: 'x.setWall', id: 'top-a', thickness: 200 })).toBe('mamad-locked');
+  expect(why(p, addWall(P(3250, 100), P(3400, 100), 200))).toBe('mamad-locked');
+});

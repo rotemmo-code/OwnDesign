@@ -8,7 +8,7 @@ export const TOUCH = 2.01;
 /** mm: ends this near to each other are one joint. */
 const JOINT = 5.01;
 /** A wall that meets another at less than 15 degrees does not run on into it. */
-const LEAST_SINE = Math.sin(14.99 * RADIAN);
+export const LEAST_SINE = Math.sin(14.99 * RADIAN);
 /** Walls within 1 degree of each other's direction lie on each other. */
 const SAME_COSINE = Math.cos(1.01 * RADIAN);
 /**
