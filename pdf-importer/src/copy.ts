@@ -6,6 +6,11 @@ const SECONDS = TIMEOUT_MS / 1000;
 /** A scale, isolated: in a right-to-left sentence "1:122.5." would otherwise show as ".1:122.5". */
 const scale = (s: number) => `⁦1:${Number(s.toFixed(1))}⁩`;
 const cm1 = (mm: number) => (mm / 10).toFixed(1);
+/** Drawn minus written, isolated like the scale: "+5.2", "-1.0", and "0.0" without a sign. */
+const difference = (mm: number) => {
+  const size = cm1(Math.abs(mm));
+  return `⁦${size === '0.0' ? '' : mm > 0 ? '+' : '-'}${size}⁩`;
+};
 
 export const copy = {
   title: 'etelier',
@@ -50,14 +55,15 @@ export const copy = {
     scale,
     plasterQuestion: 'האם השרטוט כולל טיח פנים?',
     plaster: { none: 'לא', line: 'כן, כקו נפרד', inWall: 'כן, בתוך עובי הקיר', unknown: 'לא יודע' },
-    first: 'סמנו מידה שכתובה בשרטוט: לחצו על סימן הקצה הראשון שלה, ואחר כך על השני.',
+    first: 'סמנו מידה שכתובה בשרטוט: לחצו על סימן הקצה הראשון שלה, ואחר כך על השני. כשהסמן הופך לריבוע, הוא על נקודה מדויקת.',
     second: 'עכשיו לחצו על סימן הקצה השני של המידה.',
     written: 'כמה ס"מ כתוב על המידה?',
     add: 'הוספה',
     cancel: 'ביטול',
     badNumber: 'כתבו את המספר בס"מ, בספרות בלבד, למשל 312 או 312.5.',
     list: 'המידות שסומנו',
-    row: (writtenMm: number, drawnMm: number) => `כתוב ${writtenMm / 10} ס"מ, בשרטוט ${cm1(drawnMm)} ס"מ`,
+    row: (writtenMm: number, drawnMm: number) => `כתוב ${writtenMm / 10} ס"מ, בשרטוט ${cm1(drawnMm)} ס"מ, הפרש ${difference(drawnMm - writtenMm)}`,
+    odd: 'המידה הזו שונה מהאחרות. בדקו אותה. אם היא נכונה, בדקו את האחרות.',
     short: 'קצרה ממטר: מוצגת, ולא משמשת לקנה המידה.',
     problem: {
       duplicate: 'המידה הזו סומנה פעמיים. מחקו אחת מהן.',
