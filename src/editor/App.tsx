@@ -1,14 +1,20 @@
-import { type DragEvent, useRef, useState } from 'react';
+import { type DragEvent, useMemo, useRef, useState } from 'react';
 import { copy } from '../copy';
 import { MAX_FILE_BYTES } from '../limits';
+import type { Plaster } from '../model/types';
 import type { ExtractedPage } from '../pdf/extract';
 import { openPdf, type PdfSession } from '../pdf/openPdf';
 import type { Picture } from '../pdf/render';
+import type { Calibration } from '../shared';
+import { useCalibrate } from './Calibrate';
 import { Canvas } from './Canvas';
 import './editor.css';
+import { useMeasure } from './MeasureTool';
+import { snapIndex } from './snap';
 import { Upload } from './Upload';
 
-type Shown = { pageNo: number; page: ExtractedPage; picture: Picture };
+/** turn: of the request that showed it, so that a page shown again starts afresh. */
+type Shown = { pageNo: number; page: ExtractedPage; picture: Picture; turn: number };
 type Opened = Awaited<ReturnType<typeof openPdf>>;
 
 export function App() {
@@ -17,6 +23,9 @@ export function App() {
   const [shown, setShown] = useState<Shown | null>(null);
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState('');
+  /** null until a scale is accepted, or taken unverified through the button: nothing measures before. */
+  const [calibration, setCalibration] = useState<Calibration | null>(null);
+  const [plaster, setPlaster] = useState<Plaster | null>(null);
   const drawing = useRef<HTMLDivElement>(null);
   const turn = useRef(0); // of the last file or page asked for; the answer to an earlier one is dropped
   const opening = useRef<AbortController | null>(null); // ends the file before, even while it is still opening
@@ -28,6 +37,8 @@ export function App() {
     session?.close();
     setSession(null);
     setShown(null);
+    setCalibration(null);
+    setPlaster(null);
     setProblem('');
     setFileName(file.name);
     setBusy(true);
@@ -46,6 +57,7 @@ export function App() {
   async function show(from: PdfSession, pageNo: number) {
     const mine = ++turn.current;
     setShown(null);
+    setCalibration(null);
     setProblem('');
     setBusy(true);
     const { clientWidth, clientHeight } = drawing.current!;
@@ -55,7 +67,7 @@ export function App() {
       return;
     }
     setBusy(false);
-    if (read.ok) return setShown({ pageNo, page: read.page, picture: read.picture });
+    if (read.ok) return setShown({ pageNo, page: read.page, picture: read.picture, turn: mine });
     setProblem(copy.refused[read.code]);
     if (read.code === 'timeout' || read.code === 'failed') {
       from.close(); // nothing more is asked of this reader
@@ -100,10 +112,40 @@ export function App() {
       </header>
       <p role="status">{busy ? copy.opening : pages.length > 0 && !shown && !problem ? copy.whichPage(pages.length) : ''}</p>
       <p role="alert">{problem}</p>
+      {calibration && !calibration.verified && <p className="unverified">{copy.unverified}</p>}
       {/* ltr: the drawing never mirrors with the RTL page */}
       <div dir="ltr" data-testid="drawing" ref={drawing}>
-        {shown && <Canvas {...shown} draw={draw} />}
+        {shown && (
+          <Work key={shown.turn} shown={shown} draw={draw} calibration={calibration} onCalibration={setCalibration} plaster={plaster} onPlaster={setPlaster} />
+        )}
       </div>
     </main>
+  );
+}
+
+type WorkProps = {
+  shown: Shown;
+  draw: (...part: Parameters<PdfSession['draw']>) => Promise<Picture | null>;
+  calibration: Calibration | null;
+  onCalibration: (calibration: Calibration | null) => void;
+  plaster: Plaster | null;
+  onPlaster: (answer: Plaster) => void;
+};
+
+/** The page with the tool of the moment: calibration until a scale is accepted, then measuring. */
+function Work({ shown: { page, pageNo, picture }, draw, calibration, onCalibration, plaster, onPlaster }: WorkProps) {
+  const index = useMemo(() => snapIndex(page), [page]);
+  const calibrate = useCalibrate(index, plaster, onPlaster, onCalibration);
+  const measure = useMeasure(index, calibration, plaster, () => onCalibration(null));
+  const tool = calibration ? measure : calibrate;
+  return (
+    <>
+      <Canvas page={page} pageNo={pageNo} picture={picture} draw={draw} onPick={tool.pick} onHover={tool.hover}>
+        {tool.marks}
+      </Canvas>
+      <aside dir="rtl" className="panel">
+        {tool.panel}
+      </aside>
+    </>
   );
 }
