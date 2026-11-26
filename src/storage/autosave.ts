@@ -3,24 +3,35 @@ import { checkProject, type Parsed } from './projectFile';
 
 /** The newest project is written at most this long after the first unsaved change. */
 const DELAY_MS = 2_000;
-/** Days without the draft being written or opened, after which the next opening deletes it (owner decision 10.1). */
+/** Days without the draft being written or opened, after which it is flagged expired; only clearDraft deletes it. */
 const KEEP_DAYS = 14;
 const DAY_MS = 86_400_000;
 const DB = 'etelier';
 const STORE = 'draft';
 
-/** savedAt null: the draft's time could not be read, and result then fails the check. */
-export type Draft = { savedAt: string | null; result: Parsed };
+/** savedAt null: the draft's time could not be read. expired: older than KEEP_DAYS; still stored, the user decides. */
+export type Draft = { savedAt: string | null; expired: boolean; result: Parsed };
 type Stored = { savedAt: string; model: Omit<Project, 'pdfBase64'> };
 
+type Claim = 'mine' | 'other-tab' | 'unavailable';
 let mine = false;
-/** Only the first tab backs up (owner decision 10.2). The other functions refuse in a tab that did not get 'mine'. */
-export const claimDraft = (): Promise<'mine' | 'other-tab' | 'unavailable'> =>
-  new Promise(resolve => {
+let claim: Promise<Claim> | undefined;
+/**
+ * Only the first tab backs up (owner decision 10.2). The other functions refuse in a tab that did not get 'mine'.
+ * Calls share one answer, so a second call in the tab that holds the lock (a remount, StrictMode) is 'mine' too;
+ * a tab that did not get it may ask again later.
+ */
+export const claimDraft = (): Promise<Claim> =>
+  (claim ??= requestLock().then(answer => {
+    mine = answer === 'mine';
+    if (!mine) claim = undefined;
+    return answer;
+  }));
+const requestLock = () =>
+  new Promise<Claim>(resolve => {
     if (!navigator.locks) return resolve('unavailable');
     navigator.locks
       .request('etelier-draft', { ifAvailable: true }, lock => {
-        mine = lock !== null;
         resolve(lock ? 'mine' : 'other-tab');
         return lock && new Promise<never>(() => {}); // held until the tab is gone
       })
@@ -102,10 +113,15 @@ const readTime = (value: unknown): number | null => {
   return Number.isFinite(time) && new Date(time).toISOString() === value ? time : null;
 };
 
+/** The one place that decides whether a draft is old. Owner decision: an old draft is flagged, never deleted here. */
+const isExpired = (since: number, now: number) => since !== -Infinity && now - since > KEEP_DAYS * DAY_MS;
+const notAhead = (time: number | null, now: number) => (time !== null && time <= now ? time : -Infinity);
+
 /**
- * Rejects when storage is blocked. A draft that fails the check is kept: the user decides (owner decision 10.6).
- * Expiry counts from the later of the last write and the last load that passed the check (the 'kept' record); a draft
- * whose time is unreadable or in the future counts from the first load that saw it.
+ * Rejects when storage is blocked. Nothing is ever deleted here: a draft that fails the check (owner decision 10.6) and
+ * an expired one are both returned and kept, and the user decides (restore, or clearDraft).
+ * Age counts from the later of the last write and the last load that passed the check (the 'kept' record); a time
+ * that cannot be read or lies in the future is ignored, so such a draft counts from the first load that saw it.
  */
 export const loadDraft = (): Promise<Draft | null> => {
   if (!mine) return notMine();
@@ -120,17 +136,15 @@ export const loadDraft = (): Promise<Draft | null> => {
     if (draft === undefined) return null;
     const now = Date.now();
     const savedAt = readTime(draft?.savedAt);
-    const since = Math.max(savedAt !== null && savedAt <= now ? savedAt : -Infinity, readTime(kept.result) ?? -Infinity);
-    if (now - since > KEEP_DAYS * DAY_MS && since !== -Infinity) {
-      await remove();
-      return null;
-    }
-    const result: Parsed = savedAt === null ? { ok: false, error: 'invalid' } : checkProject({ ...draft!.model, pdfBase64: pdf.result });
-    if (result.ok || since === -Infinity) {
-      // one small record, not the PDF; a failure here does not fail the load
+    const since = Math.max(notAhead(savedAt, now), notAhead(readTime(kept.result), now));
+    const expired = isExpired(since, now);
+    const result = checkProject({ ...draft?.model, pdfBase64: pdf.result });
+    // first seen, or opened intact and in time: one small record, not the PDF; a failure here does not fail the load.
+    // An expired draft keeps its age until the user answers.
+    if (since === -Infinity || (result.ok && !expired)) {
       await run('readwrite', store => store.put(new Date(now).toISOString(), 'kept')).catch(() => {});
     }
-    return { savedAt: savedAt === null ? null : draft!.savedAt!, result };
+    return { savedAt: savedAt === null ? null : (draft as Stored).savedAt, expired, result };
   });
 };
 

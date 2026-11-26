@@ -79,7 +79,7 @@ const HELPERS = `
 const ready = (page: Page) => page.evaluate(`(async () => { ${HELPERS}; return m.claimDraft(); })()`);
 const DAY = 86_400_000;
 const T0 = Date.parse('2026-03-01T09:00:00.000Z');
-/** Writes on day 0, then loads on each day given: the loaded names, null when gone. One fresh draft per call. */
+/** Writes on day 0, then loads on each day given: [savedAt, name or error, expired] per load. One fresh draft per call. */
 async function days(page: Page, loads: number[], change?: string) {
   await page.evaluate(() => m.clearDraft());
   await page.clock.setFixedTime(T0);
@@ -88,10 +88,13 @@ async function days(page: Page, loads: number[], change?: string) {
   const seen = [];
   for (const day of loads) {
     await page.clock.setFixedTime(T0 + day * DAY);
-    seen.push(await page.evaluate(async () => { const d = await m.loadDraft(); return d && [d.savedAt, d.result.ok ? d.result.project.name : d.result.error]; }));
+    seen.push(await page.evaluate(async () => { const d = await m.loadDraft(); return d && [d.savedAt, d.result.ok ? d.result.project.name : d.result.error, d.expired]; }));
   }
   return seen;
 }
+const fresh = (seen: readonly unknown[]) => [...seen, false];
+const expired = (seen: readonly unknown[]) => [...seen, true];
+const stored = (page: Page) => page.evaluate(() => raw((store: IDBObjectStore) => store.count()));
 
 test('draft: empty -> null; schedule, load: equal project and PDF bytes; clear -> null, no database left', async ({ page }) => {
   await ready(page);
@@ -108,11 +111,12 @@ test('draft: empty -> null; schedule, load: equal project and PDF bytes; clear -
         equal: draft.result.ok && JSON.stringify(draft.result.project) === JSON.stringify(p),
         pdf: draft.result.ok && Array.from(draft.result.pdf),
         savedAt: Math.abs(Date.parse(draft.savedAt) - Date.now()) < 10_000,
+        expired: draft.expired,
         databases: (await indexedDB.databases()).map(d => d.name), // before loadDraft, which opens an empty one again
         after: await m.loadDraft(),
       };
     }, p),
-  ).toEqual({ empty: null, ok: true, equal: true, pdf: [37, 80, 68, 70, 45], savedAt: true, after: null, databases: [] });
+  ).toEqual({ empty: null, ok: true, equal: true, pdf: [37, 80, 68, 70, 45], savedAt: true, expired: false, after: null, databases: [] });
 });
 
 test('six changes 450 ms apart: a write within 2 s, after it the last one; never starved', async ({ page }) => {
@@ -229,15 +233,16 @@ test('clear while a write has just started: the write lands first, then all of i
   ).toEqual([true, [], null]);
 });
 
-test('claimDraft: no lock manager, or a refused request -> unavailable', async ({ page }) => {
-  await ready(page);
+test('claimDraft: no lock manager, or a refused request -> unavailable, and asking again is allowed', async ({ page }) => {
+  // not ready(): that would claim first, and a claim that was granted is kept
   expect(
     await page.evaluate(async () => {
+      const probe = await import(/* @vite-ignore */ '/probe.js' as string);
       const refused = { request: () => Promise.reject(new DOMException('no', 'SecurityError')) };
       Object.defineProperty(navigator, 'locks', { value: refused, configurable: true });
-      const first = await m.claimDraft();
+      const first = await probe.claimDraft();
       Object.defineProperty(navigator, 'locks', { value: undefined, configurable: true });
-      return [first, await m.claimDraft()];
+      return [first, await probe.claimDraft()];
     }),
   ).toEqual(['unavailable', 'unavailable']);
 });
@@ -271,39 +276,115 @@ test('version 2 -> wrong-version and 2 records still there; model 5 -> invalid',
   ).toEqual(['wrong-version', 2, 'invalid', 2]);
 });
 
-test('never loaded: there on day 13.9, gone on day 14.1 and no database left', async ({ page }) => {
-  await ready(page);
-  const at0 = new Date(T0).toISOString();
-  expect(await days(page, [13.9])).toEqual([[at0, 'd']]);
-  expect(await days(page, [14.1])).toEqual([null]);
-  expect(await page.evaluate(async () => (await indexedDB.databases()).map(d => d.name))).toEqual([]);
-});
-
-test('restored on day 10: still there on day 15 and on day 23, gone on day 25', async ({ page }) => {
+test('never loaded: fresh on day 13.9; on day 14.1 flagged expired, still stored and restorable; gone only after clearDraft', async ({ page }) => {
   await ready(page);
   const draft = [new Date(T0).toISOString(), 'd'];
-  expect(await days(page, [10, 15])).toEqual([draft, draft]);
-  expect(await days(page, [10, 23])).toEqual([draft, draft]);
-  expect(await days(page, [10, 25])).toEqual([draft, null]);
+  expect(await days(page, [13.9])).toEqual([fresh(draft)]);
+  expect(await days(page, [14.1, 14.2])).toEqual([expired(draft), expired(draft)]); // never deleted by loading
+  expect(await page.evaluate(async () => (await indexedDB.databases()).map(d => d.name))).toEqual(['etelier']);
+  await page.evaluate(() => m.clearDraft());
+  expect(await page.evaluate(async () => [(await indexedDB.databases()).map(d => d.name), await m.loadDraft()])).toEqual([[], null]);
+});
+
+test('restored on day 10: fresh on day 15 and on day 23, flagged expired on day 25', async ({ page }) => {
+  await ready(page);
+  const draft = [new Date(T0).toISOString(), 'd'];
+  expect(await days(page, [10, 15])).toEqual([fresh(draft), fresh(draft)]);
+  expect(await days(page, [10, 23])).toEqual([fresh(draft), fresh(draft)]);
+  expect(await days(page, [10, 25])).toEqual([fresh(draft), expired(draft)]);
+});
+
+test('the clock was set back while writing and is right again: a flagged draft that can still be restored', async ({ page }) => {
+  await ready(page);
+  // written at T0, which was 30 days behind; opened with the correct time
+  expect(await days(page, [30])).toEqual([expired([new Date(T0).toISOString(), 'd'])]);
+  expect(await stored(page)).toBe(2); // pdf and model; an expired load does not refresh the draft's time
+  expect(await page.evaluate(async () => { const d = await m.loadDraft(); return d.result.ok && Array.from(d.result.pdf); })).toEqual([37, 80, 68, 70, 45]);
 });
 
 test.describe('a savedAt that cannot be trusted', () => {
   const future = new Date(T0 + 365 * DAY).toISOString();
   for (const [what, change, seen] of [
-    ['garbage', `r => ({ ...r, savedAt: 'garbage' })`, [null, 'invalid']],
-    ['an object', `r => ({ ...r, savedAt: {} })`, [null, 'invalid']],
-    ['missing', `r => { delete r.savedAt; return r; }`, [null, 'invalid']],
-    ['a date, but not as toISOString writes it', `r => ({ ...r, savedAt: 'Sun, 01 Mar 2026 09:00:00 GMT' })`, [null, 'invalid']],
+    // an intact project whose time cannot be read can still be restored; savedAt says the time is unknown
+    ['garbage', `r => ({ ...r, savedAt: 'garbage' })`, [null, 'd']],
+    ['an object', `r => ({ ...r, savedAt: {} })`, [null, 'd']],
+    ['missing', `r => { delete r.savedAt; return r; }`, [null, 'd']],
+    ['a date, but not as toISOString writes it', `r => ({ ...r, savedAt: 'Sun, 01 Mar 2026 09:00:00 GMT' })`, [null, 'd']],
     ['a year ahead', `r => ({ ...r, savedAt: '${future}' })`, [future, 'd']],
+    // a broken project is reported as such and kept; it never refreshes its own time
+    ['garbage, and the project broken', `r => ({ ...r, savedAt: 'garbage', model: { ...r.model, page: 0 } })`, [null, 'invalid']],
+    ['a year ahead, and the project broken', `r => ({ ...r, savedAt: '${future}', model: { ...r.model, page: 0 } })`, [future, 'invalid']],
   ] as const) {
-    test(`${what}: reported as ${seen[1]}, kept, and counted from the first load that saw it`, async ({ page }) => {
+    test(`${what}: reported as ${seen[0] ? 'its time' : 'no time'} and ${seen[1]}, kept, and counted from the first load that saw it`, async ({ page }) => {
       await ready(page);
-      expect(await days(page, [1, 14.9], change)).toEqual([seen, seen]);
-      expect(await page.evaluate(() => raw((store: IDBObjectStore) => store.count()))).toBe(3); // pdf, model, kept
-      expect(await days(page, [1, 15.1], change)).toEqual([seen, null]);
+      expect(await days(page, [1, 14.9], change)).toEqual([fresh(seen), fresh(seen)]);
+      expect(await stored(page)).toBe(3); // pdf, model, kept
+      expect(await days(page, [1, 15.1], change)).toEqual([fresh(seen), expired(seen)]);
+      expect(await stored(page)).toBe(3);
     });
   }
 });
+
+test('a broken draft first seen while the clock was a year ahead still expires once the clock is right', async ({ page }) => {
+  await ready(page);
+  const broken = `r => ({ ...r, savedAt: 'garbage', model: { ...r.model, page: 0 } })`;
+  const seen = [null, 'invalid'];
+  expect(await days(page, [365, 1, 14.9], broken)).toEqual([fresh(seen), fresh(seen), fresh(seen)]);
+  expect(await days(page, [365, 1, 15.1], broken)).toEqual([fresh(seen), fresh(seen), expired(seen)]);
+});
+
+test('claimDraft twice in one tab, at once and one after the other: mine every time, and the draft still works', async ({ page }) => {
+  expect(await ready(page)).toBe('mine');
+  expect(
+    await page.evaluate(async p => {
+      const claims = [...(await Promise.all([m.claimDraft(), m.claimDraft()])), await m.claimDraft()];
+      const ok = await schedule(p);
+      return [claims, ok, await show()];
+    }, named('twice')),
+  ).toEqual([['mine', 'mine', 'mine'], true, 'twice']);
+});
+
+test('claimDraft twice in a fresh tab, at once: both mine (React StrictMode runs effects twice)', async ({ page }) => {
+  await ready(page); // loads the probe and claims; this tab is replaced by a fresh one below
+  const fresh = await page.context().newPage();
+  await page.close();
+  await serveProbe(fresh);
+  expect(await fresh.evaluate(async () => { const probe = await import(/* @vite-ignore */ '/probe.js' as string); return Promise.all([probe.claimDraft(), probe.claimDraft()]); })).toEqual(['mine', 'mine']);
+});
+
+for (const [how, error] of [
+  ['open throws (Firefox with storage blocked)', 'SecurityError'],
+  ['open fails with an error event (Chromium with storage blocked)', 'UnknownError'],
+] as const) {
+  test(`claimed, but the database cannot be opened, ${how}: load and clear reject, done(false), nothing thrown; works once it opens`, async ({ page }) => {
+    const errors: string[] = [];
+    page.on('pageerror', e => errors.push(e.message));
+    expect(await ready(page)).toBe('mine');
+    expect(
+      await page.evaluate(
+        async ([error, p]) => {
+          const real = indexedDB.open.bind(indexedDB);
+          const refuse = () => {
+            if (error === 'SecurityError') throw new DOMException('blocked', error);
+            const request = {} as { error?: DOMException; onerror?: () => void };
+            setTimeout(() => ((request.error = new DOMException('blocked', error)), request.onerror?.()));
+            return request;
+          };
+          Object.defineProperty(indexedDB, 'open', { value: refuse, configurable: true });
+          const failed = [
+            await m.loadDraft().then(() => 'loaded', (e: Error) => e.name),
+            await schedule(p),
+            await m.clearDraft().then(() => 'cleared', () => 'rejected'),
+          ];
+          Object.defineProperty(indexedDB, 'open', { value: real, configurable: true });
+          return [failed, await schedule(p), await show()];
+        },
+        [error, named('later')] as const,
+      ),
+    ).toEqual([[error, false, 'cleared'], true, 'later']);
+    expect(errors).toEqual([]);
+  });
+}
 
 test('a failing put: done(false), the old draft and its PDF intact', async ({ page }) => {
   await ready(page);
