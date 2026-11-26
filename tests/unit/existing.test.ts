@@ -3,7 +3,7 @@ import { apply, Refused } from '../../src/model/apply';
 import { rebuildExisting } from '../../src/model/existing';
 import { roomMetrics } from '../../src/model/measure';
 import { computeRooms } from '../../src/model/rooms';
-import { separatorBoundsMamad, suggestedFixed, wallBoundsMamad, wallEntersMamad } from '../../src/model/rules';
+import { mamadAllows, mamadSpan, mamadWallsKept, separatorBoundsMamad, suggestedFixed, wallBoundsMamad, wallEntersMamad } from '../../src/model/rules';
 import { ProjectSchema } from '../../src/model/schema';
 import type { Action, Project, Pt, Result, State, Wall } from '../../src/model/types';
 import { boxProject, wall } from '../fixtures/box';
@@ -329,25 +329,26 @@ it('after setMamad null, deleting and redrawing the partition splits without a m
   expect(again.notice && typeof again.notice === 'object' && again.notice.rooms[0].type).toBe('split');
 });
 
-it('keepName swaps id and name, the mamad follows its id; the same room or an unknown one -> invalid-action', () => {
+it('keepName swaps id and name; with the mamad -> mamad-locked, after setMamad null it works; the same room or an unknown one -> invalid-action', () => {
   const split = ok(boxProject(), across).project;
   const other = split.existing.rooms.find(r => !['room-a', 'room-b'].includes(r.id))!;
   const k = ok(split, { type: 'x.keepName', room: 'room-a', part: other.id }).project;
   expect([m2(k, 'room-a'), m2(k, other.id)]).toEqual([5.25, 6.45]);
   expect([k.existing.rooms.find(r => r.id === 'room-a')!.name, k.existing.rooms.find(r => r.id === other.id)!.name]).toEqual(['A', '']);
   const m = mamadOn('room-b');
-  const sw = ok(m, { type: 'x.keepName', room: 'room-b', part: 'room-a' }).project;
-  expect(sw.mamad).toBe('room-b');
-  expect(sw.existing.rooms.filter(r => r.isMamad).map(r => [r.id, r.boundary[0].x])).toEqual([['room-b', 200]]);
+  expect(why(m, { type: 'x.keepName', room: 'room-b', part: 'room-a' })).toBe('mamad-locked');
+  expect(why(m, { type: 'x.keepName', room: 'room-a', part: 'room-b' })).toBe('mamad-locked');
+  const sw = ok(unmarked(m), { type: 'x.keepName', room: 'room-b', part: 'room-a' }).project;
+  expect(sw.existing.rooms.map(r => [r.id, r.name, r.boundary[0].x])).toEqual([['room-b', 'B', 200], ['room-a', 'A', 3300]]);
   expect(why(m, { type: 'x.keepName', room: 'room-a', part: 'room-a' })).toBe('invalid-action');
   expect(why(m, { type: 'x.keepName', room: 'room-a', part: 'nope' })).toBe('invalid-action');
 });
 
-it('mamad-outdoor: setMamad on a balcony, outdoor on the mamad, keepName moving the mark onto a balcony', () => {
+it('mamad-outdoor: setMamad on a balcony, outdoor on the mamad; keepName cannot move the mark at all', () => {
   const balcony = ok(boxProject(), { type: 'x.setRoom', id: 'room-a', outdoor: true }).project;
   expect(why(balcony, { type: 'setMamad', room: 'room-a' })).toBe('mamad-outdoor');
   expect(why(mamadOn('room-b'), { type: 'x.setRoom', id: 'room-b', outdoor: true })).toBe('mamad-outdoor');
-  expect(why(mamadOn('room-b', balcony), { type: 'x.keepName', room: 'room-b', part: 'room-a' })).toBe('mamad-outdoor');
+  expect(why(mamadOn('room-b', balcony), { type: 'x.keepName', room: 'room-b', part: 'room-a' })).toBe('mamad-locked');
 });
 
 it('setMamad: a room, none, null (question open again); an unknown room -> invalid-action', () => {
@@ -570,4 +571,222 @@ it('mamad double openings: a double needs half of the narrower width; an opening
   expect(why(one, add(one, 200, 900))).toBe('invalid-geometry');
   const apart = ok(ok(bare, add(bare, 0, 800)).project, add(bare, 1000, 800)).project;
   expect(why(apart, add(apart, 400, 1000))).toBe('invalid-geometry');
+});
+
+// ---- follow-up: only the mamad is locked, not the whole wall (owner) ----
+const mamadRoom = (p: Project) => p.existing.rooms.find(r => r.isMamad)!;
+const sameOutline = (p: Project, q: Project) => {
+  const [r, k] = [mamadRoom(p), mamadRoom(q)];
+  expect(k.id).toBe(r.id);
+  expect(k.boundary).toHaveLength(r.boundary.length);
+  r.boundary.forEach((pt, i) => expect(Math.hypot(pt.x - k.boundary[i].x, pt.y - k.boundary[i].y)).toBeLessThan(0.03));
+  expect(k.holes).toHaveLength(r.holes.length);
+};
+const thrownBy = (f: () => unknown) => {
+  try {
+    f();
+  } catch (e) {
+    return e;
+  }
+  return undefined;
+};
+
+it('mamadSpan: where a wall\'s face is the mamad\'s edge, and how far the walls meeting it there reach', () => {
+  const p = mamadOn('room-b');
+  expect(mamadSpan(p.existing, 'top')).toEqual({ from: 3300, to: 6200, before: 100, after: 200 });
+  expect(mamadSpan(p.existing, 'bottom')).toEqual({ from: 200, to: 3100, before: 200, after: 100 });
+  expect(mamadSpan(p.existing, 'right')).toEqual({ from: 0, to: 4000, before: 200, after: 200 });
+  expect(mamadSpan(p.existing, 'left')).toBeNull();
+  expect(mamadSpan(boxProject().existing, 'top')).toBeNull();
+});
+
+it('a wall that runs past the mamad: the far end moves along its line and the wall splits outside the span', () => {
+  const p = mamadOn('room-b');
+  const cases: Action[] = [
+    { type: 'x.setWall', id: 'top', a: P(-50, 100) },
+    { type: 'x.setWall', id: 'bottom', b: P(-100, 4300) },
+    { type: 'x.setWall', id: 'top', a: P(500, 100) },
+    { type: 'x.splitWall', id: 'top', at: 3200 },
+    { type: 'x.splitWall', id: 'top', at: 1000 },
+  ];
+  for (const a of cases) sameOutline(p, ok(p, a).project);
+  expect(why(p, { type: 'x.splitWall', id: 'top', at: 3200.5 })).toBe('mamad-locked');
+});
+
+it('after a split outside the span the far part is an ordinary wall; the near part stays locked', () => {
+  const p = ok(mamadOn('room-b'), { type: 'x.splitWall', id: 'top', at: 3200 }).project;
+  // the second part follows the first in the list
+  const near = p.existing.walls[1].id;
+  expect(p.existing.walls[1]).toMatchObject({ a: P(3200, 100), b: P(6400, 100) });
+  expect(p.existing.walls.find(w => w.id === 'top')).toMatchObject({ a: P(0, 100), b: P(3200, 100) });
+  const far: Action[] = [
+    { type: 'x.setWall', id: 'top', a: P(0, 120), b: P(3200, 120) },
+    { type: 'x.setWall', id: 'top', thickness: 240 },
+    { type: 'x.deleteWall', id: 'top' },
+  ];
+  expect(far.map(a => why(p, a))).toEqual(['ok', 'ok', 'ok']);
+  const nearCases: Action[] = [
+    { type: 'x.setWall', id: near, a: P(3200, 120), b: P(6400, 120) },
+    { type: 'x.setWall', id: near, thickness: 240 },
+    { type: 'x.deleteWall', id: near },
+  ];
+  expect(nearCases.map(a => why(p, a))).toEqual(nearCases.map(() => 'mamad-locked'));
+});
+
+it('still mamad-locked: delete, thicker, thinner, an end off the line, shortening into the span, a split inside it or in its corner joint', () => {
+  const p = mamadOn('room-b');
+  const cases: Action[] = [
+    { type: 'x.deleteWall', id: 'right' },
+    { type: 'x.setWall', id: 'right', thickness: 300 },
+    { type: 'x.setWall', id: 'right', thickness: 100 },
+    { type: 'x.setWall', id: 'top', a: P(0, 105) },
+    { type: 'x.setWall', id: 'right', b: P(6305, 4200) },
+    { type: 'x.setWall', id: 'top', b: P(6190, 100) },
+    { type: 'x.setWall', id: 'bottom', a: P(6090, 4300) },
+    { type: 'x.splitWall', id: 'top', at: 4000 },
+    { type: 'x.splitWall', id: 'top', at: 3250 },
+    { type: 'x.splitWall', id: 'right', at: 100 },
+  ];
+  expect(cases.map(a => why(p, a))).toEqual(cases.map(() => 'mamad-locked'));
+  expect(cases.map(a => why(unmarked(p), a)).filter(r => r !== 'ok')).toEqual([]);
+});
+
+it('a short mamad wall extended 1 m past its corner along its line is accepted, and the mamad keeps its outline', () => {
+  const p = mamadOn('room-b');
+  const r = ok(p, { type: 'x.setWall', id: 'right', a: P(6300, -800) });
+  sameOutline(p, r.project);
+  expect(why(p, { type: 'x.setWall', id: 'right', a: P(6300, -800), thickness: 220 })).toBe('mamad-locked');
+});
+
+it('a mamad span in the middle of a wall: splits and ends outside it pass, inside it and in the joints do not', () => {
+  const walls = [wall('top', 0, 100, 9600, 100, 200), wall('right', 9500, 200, 9500, 4200, 200), wall('bottom', 9600, 4300, 0, 4300, 200), wall('left', 100, 4200, 100, 200, 200), wall('p1', 3250, 200, 3250, 4200, 100), wall('p2', 6350, 200, 6350, 4200, 100)];
+  const s: State = { walls, openings: [], separators: [], rooms: [] };
+  s.rooms = computeRooms(s, []).rooms.map(r => ({ ...r, inApartment: true }));
+  const middle = s.rooms.find(r => r.boundary.some(q => q.x === 3300 && q.y === 200))!;
+  const p = mamadOn(middle.id, { ...boxProject(), existing: s });
+  expect(mamadSpan(p.existing, 'top')).toEqual({ from: 3300, to: 6300, before: 100, after: 100 });
+  const yes: Action[] = [
+    { type: 'x.splitWall', id: 'top', at: 3200 },
+    { type: 'x.splitWall', id: 'top', at: 6400 },
+    { type: 'x.setWall', id: 'top', a: P(-500, 100), b: P(10000, 100) },
+    { type: 'x.setWall', id: 'top', a: P(3200, 100) },
+  ];
+  for (const a of yes) sameOutline(p, ok(p, a).project);
+  const no: Action[] = [
+    { type: 'x.splitWall', id: 'top', at: 3250 },
+    { type: 'x.splitWall', id: 'top', at: 4000 },
+    { type: 'x.splitWall', id: 'top', at: 6350 },
+    { type: 'x.setWall', id: 'top', a: P(3300, 100) },
+    { type: 'x.setWall', id: 'top', a: P(3310, 100) },
+    { type: 'x.setWall', id: 'top', b: P(6290, 100) },
+  ];
+  expect(no.map(a => why(p, a))).toEqual(no.map(() => 'mamad-locked'));
+});
+
+it('the guard after the recompute: a mamad wall thickened outward keeps the inside face and is still refused; a split part counts as the wall', () => {
+  const p = mamadOn('room-b');
+  const thick = { ...p.existing, walls: p.existing.walls.map(w => (w.id === 'right' ? wall('right', 6350, 200, 6350, 4200, 300) : w)) };
+  expect(thrownBy(() => rebuildExisting(p, thick, ['right']))).toEqual(new Refused('mamad-locked'));
+  const thin = { ...p.existing, walls: p.existing.walls.map(w => (w.id === 'right' ? wall('right', 6250, 200, 6250, 4200, 100) : w)) };
+  expect(thrownBy(() => rebuildExisting(p, thin, ['right']))).toEqual(new Refused('mamad-locked'));
+  const renamed = { ...p.existing, walls: p.existing.walls.map(w => (w.id === 'right' ? wall('r2', 6300, 200, 6300, 4200, 200) : w)) };
+  expect(thrownBy(() => rebuildExisting(p, renamed, ['r2']))).toBeUndefined();
+});
+
+it('a hidden duplicate under a mamad wall: the same body is locked, a thinner one inside it may go', () => {
+  const two = withWalls(boxProject(), [...boxProject().existing.walls, wall('part2', 3250, 200, 3250, 4200, 100), wall('inner', 3250, 200, 3250, 4200, 60)]);
+  const p = mamadOn('room-b', two);
+  expect(why(p, { type: 'x.deleteWall', id: 'part2' })).toBe('mamad-locked');
+  sameOutline(p, ok(p, { type: 'x.deleteWall', id: 'inner' }).project);
+});
+
+it('mamadAllows and mamadWallsKept on their own: the pre-check and the guard each refuse without the other', () => {
+  const p = mamadOn('room-b');
+  const s = p.existing;
+  const top = s.walls[0];
+  const right = s.walls[1];
+  expect(mamadAllows.set(s, top, { ...top, b: P(6190, 100) })).toBe(false);
+  expect(mamadAllows.set(s, top, { ...top, a: P(3310, 100) })).toBe(false);
+  expect(mamadAllows.set(s, right, { ...right, thickness: 220 })).toBe(false);
+  expect(mamadAllows.set(s, top, { ...top, a: P(-50, 100) })).toBe(true);
+  const swap = (w: Wall) => ({ ...s, walls: s.walls.map(x => (x.id === w.id ? w : x)) });
+  expect(mamadWallsKept(s, swap({ ...right, thickness: 220 }))).toBe(false);
+  expect(mamadWallsKept(s, swap({ ...right, a: P(6300, -800) }))).toBe(true);
+  const pieces = { ...s, walls: [...s.walls.filter(w => w.id !== 'top'), wall('t1', 0, 100, 4000, 100, 200), wall('t2', 4010, 100, 6400, 100, 200)] };
+  expect(mamadWallsKept(s, pieces)).toBe(false);
+  const joined = { ...s, walls: [...s.walls.filter(w => w.id !== 'top'), wall('t1', 0, 100, 4000, 100, 200), wall('t2', 4000, 100, 6400, 100, 200)] };
+  expect(mamadWallsKept(s, joined)).toBe(true);
+});
+
+// ---- follow-up fix round 1: the corner joint, keepName, a wall along a mamad wall ----
+const noWindow = (p: Project): Project => ({ ...p, existing: { ...p.existing, openings: p.existing.openings.filter(o => o.id !== 'window') } });
+
+it("the mamad's corner joint stays covered: an end may not move into it", () => {
+  const p = noWindow(mamadOn('room-b'));
+  const top = (x: number): Action => ({ type: 'x.setWall', id: 'top', a: P(x, 100) });
+  expect([top(3300), top(3250), top(3201)].map(a => why(p, a))).toEqual(['mamad-locked', 'mamad-locked', 'mamad-locked']);
+  sameOutline(p, ok(p, top(3200)).project);
+  sameOutline(p, ok(p, top(500)).project);
+  expect(why(p, { type: 'x.setWall', id: 'right', b: P(6300, 4150) })).toBe('mamad-locked');
+  expect(why(p, { type: 'x.setWall', id: 'right', b: P(6300, 5000) })).toBe('ok');
+});
+
+it('split at the margin, in either order: the near part covers the joint and stays locked, the far part may go', () => {
+  const p = noWindow(mamadOn('room-b'));
+  const split = ok(p, { type: 'x.splitWall', id: 'top', at: 3200 }).project;
+  const near = split.existing.walls[1].id;
+  const moveNear: Action = { type: 'x.setWall', id: near, a: P(3300, 100) };
+  expect(why(split, moveNear)).toBe('mamad-locked');
+  expect(why(split, { type: 'x.deleteWall', id: near })).toBe('mamad-locked');
+  const farGone = ok(split, { type: 'x.deleteWall', id: 'top' }).project;
+  sameOutline(p, farGone);
+  expect(why(farGone, moveNear)).toBe('mamad-locked');
+  expect(why(farGone, { type: 'x.deleteWall', id: near })).toBe('mamad-locked');
+});
+
+it('mamadWallsKept asks for the corner joints too', () => {
+  const p = mamadOn('room-b');
+  const s = p.existing;
+  const shorter = { ...s, walls: s.walls.map(w => (w.id === 'top' ? { ...w, a: P(3300, 100) } : w)) };
+  expect(mamadWallsKept(s, shorter)).toBe(false);
+  expect(mamadAllows.set(s, s.walls[0], { ...s.walls[0], a: P(3300, 100) })).toBe(false);
+  const atMargin = { ...s, walls: s.walls.map(w => (w.id === 'top' ? { ...w, a: P(3200, 100) } : w)) };
+  expect(mamadWallsKept(s, atMargin)).toBe(true);
+});
+
+it('no wall along a mamad wall: the far part laid over the near part, or a wall inside the mamad wall, is refused', () => {
+  const p = noWindow(mamadOn('room-b'));
+  const split = ok(p, { type: 'x.splitWall', id: 'top', at: 3200 }).project;
+  expect(why(split, { type: 'x.setWall', id: 'top', b: P(4500, 100) })).toBe('mamad-locked');
+  expect(why(split, { type: 'x.setWall', id: 'top', b: P(3100, 100) })).toBe('ok');
+  expect(why(p, addWall(P(4000, 100), P(5000, 100)))).toBe('mamad-locked');
+  expect(why(p, addWall(P(6300, 1000), P(6300, 1500)))).toBe('mamad-locked');
+  expect(why(unmarked(split), { type: 'x.setWall', id: 'top', b: P(4500, 100) })).toBe('ok');
+});
+
+it('still allowed next to a mamad wall: a T from the neighbour, a diagonal to its outer corner, a wall laid against its outer face', () => {
+  const p = mamadOn('room-b');
+  const cases = [addWall(P(200, 2000), P(3250, 2000)), addWall(P(7400, -1000), P(6400, 0)), addWall(P(6500, 1000), P(6500, 3000), 200), addWall(P(4000, -100), P(5000, -100), 200)];
+  for (const a of cases) sameOutline(p, ok(p, a).project);
+});
+
+// ---- follow-up fix round 2: lay judges what an edit adds ----
+it('a wall that already overlaps a mamad wall\'s joint stays editable; only a grown overlap is refused', () => {
+  const base = boxProject();
+  const walls = [
+    ...base.existing.walls.filter(w => w.id !== 'top'),
+    wall('top-a', 0, 100, 3300, 100, 200),
+    wall('top-b', 3200, 100, 6400, 100, 200),
+  ];
+  const plain: Project = { ...base, existing: { ...base.existing, openings: base.existing.openings.filter(o => o.wallId !== 'top') } };
+  const p = mamadOn('room-b', withWalls(plain, walls));
+  expect(wallBoundsMamad(p.existing, 'top-a')).toBe(false);
+  sameOutline(p, ok(p, { type: 'x.setWall', id: 'top-a', a: P(-50, 100) }).project);
+  sameOutline(p, ok(p, { type: 'x.setWall', id: 'top-a', thickness: 220 }).project);
+  expect(why(p, { type: 'x.setWall', id: 'top-a', b: P(3400, 100) })).toBe('mamad-locked');
+  expect(why(p, { type: 'x.deleteWall', id: 'top-a' })).toBe('ok');
+  // a thinner wall on the joint, thickened: its overlap grows, refused
+  const thin = mamadOn('room-b', withWalls(plain, walls.map(w => (w.id === 'top-a' ? { ...w, thickness: 100 } : w))));
+  expect(why(thin, { type: 'x.setWall', id: 'top-a', thickness: 200 })).toBe('mamad-locked');
+  expect(why(p, addWall(P(3250, 100), P(3400, 100), 200))).toBe('mamad-locked');
 });
