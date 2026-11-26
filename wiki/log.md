@@ -144,3 +144,11 @@ mamad (split before the mamad's corner joint, far end moved along its line); alo
 line, thickness and corner joints are kept, it cannot be deleted, and no wall may be laid along it.
 Review found the corner joint could be uncovered and that the new rule blocked an ordinary edit of a
 neighbouring wall; both fixed. Tests: 497 unit, 28 edge, 202 browser. Pages: [pdf-importer](pdf-importer.md).
+
+## [2026-11-26] build | PDF importer: finish layers (plaster or cladding)
+A finish of 1 to 200 mm per wall side and per free wall end, drawn as a strip that runs across
+openings (user: a door or window is not the full height of the wall), mitred at corners, never along
+a balcony; `roomAfterFinish` gives the net room, `roomMetrics` the gross one. The project file gained
+two optional fields; earlier files still open. Review found that splitting a wall copied an end
+finish to the cut, and that small joint edges were left bare (up to 0.007 m2 at 20 cm); both fixed.
+Known limits are listed in the plan. Tests: 528 unit, 43 edge, 202 browser. Pages: [pdf-importer](pdf-importer.md).
