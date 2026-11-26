@@ -52,19 +52,29 @@ function seenFrom(m: Axis, p: Pt, out: Pt) {
 }
 /** The place lies in the body of m, or within TOUCH of it. */
 const holds = (m: Axis, s: number, off: number) => s >= -TOUCH && s <= m.l + TOUCH && Math.abs(off) <= m.t / 2 + TOUCH;
-/** How far an end at p, t thick, runs on to out: to the centre line of a wall that it, or a corner of it, touches. */
-function reach(walls: Axis[], p: Pt, out: Pt, t: number) {
-  const points = [p, step(p, normalA(out), t / 2), step(p, normalA(out), -t / 2)];
-  return walls.reduce((best, m) => {
-    const { s, off, sine } = seenFrom(m, p, out);
+/**
+ * How far an end at q of a wall l long and t thick runs on to out: its body, and the place where it joins. To the centre
+ * line of a wall that its middle touches; the body only where it fits (a corner would come out of the far face of a
+ * thinner wall). Where no middle touches, the same for a corner, if the body fits and the wall is longer than twice its
+ * thickness; otherwise only that corner goes to the face, and the end does not join: a column or a thick wall is not
+ * filled out to a face that it only touches. (Closing gaps does not close a corner's gap: the mitres give back both
+ * sides of it.)
+ */
+function runOn(all: Axis[], q: Pt, out: Pt, l: number, t: number) {
+  const corners = [step(q, normalA(out), t / 2), step(q, normalA(out), -t / 2)];
+  const touches = all.flatMap(m => {
+    const { s, off, sine } = seenFrom(m, q, out);
     const e = -off / sine;
-    const near = points.some(q => {
-      const seen = seenFrom(m, q, out);
-      return holds(m, seen.s, seen.off);
-    });
-    const touches = near && Math.abs(sine) >= LEAST_SINE;
-    return touches && holds(m, s + e * dot(out, m.u), 0) ? Math.max(best, e) : best;
-  }, 0);
+    if (Math.abs(sine) < LEAST_SINE || !holds(m, s + e * dot(out, m.u), 0)) return [];
+    const fits = t * Math.abs(dot(out, m.u)) <= m.t + 0.01;
+    if (holds(m, s, off)) return [{ middle: true, body: fits ? e : 0, joint: e }];
+    const near = corners.map(c => seenFrom(m, c, out)).filter(c => holds(m, c.s, c.off));
+    if (!near.length) return [];
+    const face = Math.min(...near.map(c => (Math.abs(c.off) - m.t / 2) / Math.abs(sine)));
+    return [fits && l > 2 * t ? { middle: false, body: e, joint: e } : { middle: false, body: face, joint: 0 }];
+  });
+  const used = touches.some(x => x.middle) ? touches.filter(x => x.middle) : touches;
+  return { body: Math.max(0, ...used.map(x => x.body)), joint: Math.max(0, ...used.map(x => x.joint)) };
 }
 /** The two directions of a wall whose centre line passes p, and goes on at both sides of it. */
 function through(m: Axis, p: Pt): Arm[] {
@@ -94,9 +104,8 @@ export function joinWalls(walls: Wall[]): Map<Id, Joined> {
   const arms = all.flatMap(({ w, u, l, t }, i) =>
     ([0, 1] as const).map((end): Arm => {
       const [q, out] = end ? [w.b, u] : [w.a, minus(u)];
-      // into a thinner wall the body does not run on: a corner of it would come out of the far face
-      const wide = all.filter(m => t * Math.abs(dot(out, m.u)) <= m.t + 0.01);
-      return { i, end, p: step(q, out, reach(wide, q, out, t)), at: step(q, out, reach(all, q, out, t)), u: minus(out), l, t };
+      const { body, joint } = runOn(all, q, out, l, t);
+      return { i, end, p: step(q, out, body), at: step(q, out, joint), u: minus(out), l, t };
     }),
   );
   // ends within JOINT of one another, also by way of others, are one joint
@@ -117,12 +126,14 @@ export function joinWalls(walls: Wall[]): Map<Id, Joined> {
     const mean = (k: 'x' | 'y') => ends.reduce((sum, o) => sum + o.at[k], 0) / ends.length;
     const at = { x: mean('x'), y: mean('y') };
     const joint = [...all.flatMap(m => through(m, at)), ...ends];
-    // of walls lying on each other only the thickest counts, of equal ones in the very same direction the first
-    const hides = (y: Arm, x: Arm, before: boolean) => {
+    // of walls lying on each other only the thickest counts; of equal ones in the very same direction a passing wall, then
+    // the smaller id, so that the order of the walls does not matter
+    const id = (x: Arm) => (x.i < 0 ? '' : all[x.i].w.id);
+    const hides = (y: Arm, x: Arm) => {
       const cosine = dot(x.u, y.u);
-      return y.t > x.t ? cosine > SAME_COSINE : before && y.t === x.t && cosine > 1 - 1e-12;
+      return y.t > x.t ? cosine > SAME_COSINE : y.t === x.t && cosine > 1 - 1e-12 && id(y) < id(x);
     };
-    const round = joint.filter((x, i) => !joint.some((y, j) => hides(y, x, j < i))).sort((x, y) => angle(x.u) - angle(y.u));
+    const round = joint.filter(x => !joint.some(y => hides(y, x))).sort((x, y) => angle(x.u) - angle(y.u));
     round.forEach((x, k) => {
       const y = round[(k + 1) % round.length];
       const gap = (angle(y.u) - angle(x.u) + 4 * Math.PI) % (2 * Math.PI);

@@ -383,17 +383,33 @@ describe('joints', () => {
     }
   });
 
-  it('ends that are one joint only by way of others get no corner far from them', () => {
-    // short walls in a zigzag, each starting 4 mm from where the one before ends: one joint, 10 m long
-    const walls: Wall[] = [];
-    for (let i = 0, p = P(0, 0); i < 40; i++) {
-      const a = ((i % 2 ? -1 : 1) * 30 * Math.PI) / 180;
-      const q = P(p.x + 250 * Math.cos(a), p.y + 250 * Math.sin(a));
-      walls.push(wall(`z${i}`, p.x, p.y, q.x, q.y, 100));
-      p = P(q.x + 4 * Math.cos(a + 1), q.y + 4 * Math.sin(a + 1));
+  it('ends 4 mm apart in a row are one joint, even where the outer ones are 8 mm apart, whatever the order', () => {
+    // walls of 20 whose lower ends lie on a line, leaning alternately to either side
+    const fan = (n: number) => Array.from({ length: n }, (_, i) => {
+      const a = ((i % 2 ? 110 : 70) * Math.PI) / 180;
+      return wall(`f${i}`, 4 * i, 0, 4 * i + 600 * Math.cos(a), 600 * Math.sin(a), 20);
+    });
+    const orders = <T>(list: T[]): T[][] => (list.length < 2 ? [list] : list.flatMap((x, i) => orders(list.filter((_, j) => j !== i)).map(o => [x, ...o])));
+    for (const n of [3, 4]) {
+      const walls = fan(n);
+      const look = (list: Wall[]) => {
+        const joined = joinWalls(list);
+        return walls.map(w => {
+          const j = joined.get(w.id)!;
+          return [j.body, j.A, j.B, j.tips.map(t => JSON.stringify(t)).sort()];
+        });
+      };
+      const first = look(walls);
+      for (const order of orders(walls)) expect(look(order), order.map(w => w.id).join()).toEqual(first);
     }
-    for (const w of walls)
-      for (const tip of joinWalls(walls).get(w.id)!.tips) expect(Math.min(...[w.a, w.b].map(end => Math.max(...tip.map(p => Math.hypot(p.x - end.x, p.y - end.y))))), w.id).toBeLessThan(260);
+  });
+
+  it('an end whose middle meets its corner partner does not run on to another wall that only its corner touches', () => {
+    // a box corner at (300, 6800), and a wall at 45 degrees whose body holds one corner of the end of t, not its middle
+    const [t, l] = [wall('t', 1400, 6800, 300, 6800, 100), wall('l', 300, 6800, 300, 5600, 100)];
+    const joined = joinWalls([t, l, wall('d', 900, 7500, 0, 6600, 100)]);
+    expect(Math.min(...joined.get('t')!.body.map(p => p.x))).toBeCloseTo(300, 6);
+    expect(Math.max(...joined.get('l')!.body.map(p => p.y))).toBeCloseTo(6800, 6);
   });
 
   it('a wall takes part in a joint when its centre line passes within 5 mm of it', () => {
@@ -441,13 +457,13 @@ describe('joints', () => {
     expect([1, 1.1].map(tips)).toEqual([[0, 1, 1], [1, 0, 1]]);
   });
 
-  it('of equal walls that lie on each other the first takes part in the joint, at any angle; a wall that passes before all', () => {
+  it('of equal walls that lie on each other the one with the smaller id takes part in the joint, at any angle and in any order; a wall that passes before all', () => {
     for (let k = 0; k < 40; k++) {
       const at = (degrees: number, length: number) => P(Math.cos(k + (degrees * Math.PI) / 180) * length, Math.sin(k + (degrees * Math.PI) / 180) * length);
       const from = (id: string, p: Pt, q: Pt, t: number) => wall(id, p.x, p.y, q.x, q.y, t);
       const tips = (...walls: Wall[]) => [...joinWalls(walls).values()].map(j => j.tips.length);
       const [h, v, v2] = [from('h', P(0, 0), at(0, 3000), 100), from('v', P(0, 0), at(90, 3000), 100), from('v2', at(90, 1500), P(0, 0), 100)];
-      expect([tips(h, v, v2), tips(v2, h, v)], `${k}`).toEqual([[1, 1, 0], [1, 1, 0]]);
+      expect([tips(h, v, v2), tips(v2, h, v)], `${k}`).toEqual([[1, 1, 0], [0, 1, 1]]);
       const [m, n] = [from('m', at(180, 3000), at(0, 3000), 100), from('n', P(0, 0), at(0, 1500), 100)];
       expect(tips(n, m, from('k', P(0, 0), at(150, 2000), 50)), `${k}`).toEqual([0, 0, 0]);
     }
@@ -562,6 +578,51 @@ describe('holes', () => {
     expect(formatM2(metrics(b).areaMm2)).toBe('11.54');
     expect(metrics(b).rect).toEqual({ l: 4000, w: 2900 });
     expect(changes).toEqual([]);
+  });
+
+  it('a column, or a wall too thick to fit, that touches a wall only by a corner adds no floor to it, at any angle and place', () => {
+    // a wall long by thick turned by degrees in room B, its leftmost corner gap mm from the partition's face: square
+    // columns, then walls that are long enough to join but too thick to fit into the partition at that angle
+    for (const [long, thick, degrees] of [[300, 300, 45], [600, 600, 45], [300, 300, 30], [300, 300, 60], [150, 150, 40], [1000, 300, 45], [1000, 300, 30]])
+      for (const gap of [0, 0.5])
+        for (let k = 0; k < 6; k++) {
+          const [a, h] = [(degrees * Math.PI) / 180, long / 2];
+          const c = P(3300 + gap + h * Math.cos(a) + (thick / 2) * Math.sin(a), 2200);
+          const column = wall('col', c.x - h * Math.cos(a), c.y - h * Math.sin(a), c.x + h * Math.cos(a), c.y + h * Math.sin(a), thick);
+          const s = box();
+          const found = computeRooms({ ...s, walls: placed([...s.walls, column], k * 0.9, P(2000 + k * 1311, 4000 - k * 517)), rooms: [] }, []).rooms.map(r => metrics(r).areaMm2).sort((p, q) => p - q);
+          const text = `${long} by ${thick} at ${degrees} degrees, ${gap} mm, place ${k}`;
+          expect(found, text).toHaveLength(2);
+          // at most the gap is closed: a strip of the end's width
+          near(found[0], 11.6e6 - long * thick, (thick * gap) / Math.min(Math.sin(a), Math.cos(a)) + 1);
+          near(found[1], 12e6, 1);
+        }
+    // an upright column whose corner touches the near face of a wall at 45 degrees across the corner of a room
+    const k = 1000 - 50 * Math.SQRT1_2;
+    const corner = P(4500, 4500 - (4000 - 50 * Math.SQRT2));
+    const walls = [...loop([P(-50, -50), P(6050, -50), P(6050, 4050), P(-50, 4050)], 100, 'o'), wall('d', 5000 - k, 1000 - k, 5000 + k, 1000 + k, 100), wall('col', corner.x - 300, corner.y + 150, corner.x, corner.y + 150, 300)];
+    for (let n = 0; n < 6; n++) {
+      const found = areas(plan(placed(walls, n * 0.9, P(2000 + n * 1311, 4000 - n * 517))));
+      near(found[0], (2000 - 50 * Math.SQRT2) ** 2 / 2);
+      near(found[1], 24e6 - (2000 + 50 * Math.SQRT2) ** 2 / 2 - 90_000, 400);
+    }
+  });
+
+  it('a partition too thick to fit closes the room where its corner stops up to 2 mm short of a wall, at any angle and place', () => {
+    // 300 thick, from the bottom wall's centre line up towards the partition, its nearest corner gap mm from that face; in
+    // room B, and the same mirrored in room A
+    for (const degrees of [30, 45, 60])
+      for (const gap of [0.5, 1, 2, 2.1])
+        for (const mirror of [false, true])
+          for (let k = 0; k < 6; k++) {
+            const a = (degrees * Math.PI) / 180;
+            const top = P(3300 + gap + 150 * Math.sin(a), 3000);
+            const foot = P(top.x + 1300 / Math.tan(a), 4300);
+            const [p, q] = mirror ? [P(6500 - top.x, top.y), P(6500 - foot.x, foot.y)] : [top, foot];
+            const s = box();
+            const found = computeRooms({ ...s, walls: placed([...s.walls, wall('thick', q.x, q.y, p.x, p.y, 300)], k * 0.9, P(2000 + k * 1311, 4000 - k * 517)), rooms: [] }, []).rooms;
+            expect(found, `${degrees} degrees, ${gap} mm, ${mirror ? 'room A' : 'room B'}, place ${k}`).toHaveLength(gap <= 2 ? 3 : 2);
+          }
   });
 
   it('a closed box that touches a wall at one corner is a hole of the room around it, at any place', () => {
