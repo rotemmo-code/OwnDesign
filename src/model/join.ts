@@ -76,11 +76,14 @@ function runOn(all: Axis[], q: Pt, out: Pt, l: number, t: number) {
   const used = touches.some(x => x.middle) ? touches.filter(x => x.middle) : touches;
   return { body: Math.max(0, ...used.map(x => x.body)), joint: Math.max(0, ...used.map(x => x.joint)) };
 }
-/** The two directions of a wall whose centre line passes p, and goes on at both sides of it. */
+/**
+ * The two directions of a wall whose body holds p, and goes on at both sides of it. Not its centre line within 5 mm: a
+ * thick wall drawn past the centre line of a thin one would then leave a notch.
+ */
 function through(m: Axis, p: Pt): Arm[] {
   const { s, off } = seenFrom(m, p, m.u);
   const at = step(m.w.a, m.u, s);
-  const passes = s > JOINT && s < m.l - JOINT && Math.abs(off) <= JOINT;
+  const passes = s > JOINT && s < m.l - JOINT && holds(m, s, off);
   return passes ? [m.u, minus(m.u)].map(u => ({ i: -1, end: 0, p: at, at, u, l: Infinity, t: m.t })) : [];
 }
 /** Of x and y, the next clockwise on screen: a face that stops more than 0.01 mm before the two faces meet is run on to there. */

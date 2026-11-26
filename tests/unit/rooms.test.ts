@@ -264,10 +264,10 @@ describe('joints', () => {
   });
 
   it('a thick wall that meets a thin one at an angle leaves no notch, and comes out of it only where it was drawn so', () => {
-    // a wall of t at the angle ends on a wall of 100 along y = 0, at its face (y = -50), half way in or at its centre line
+    // a wall of t at the angle ends on a wall of 100 along y = 0: at its face (y = -50), half way in, at its centre line or past it
     for (const t of [80, 100, 200, 300])
       for (const degrees of [15, 20, 30, 45, 60, 75, 90])
-        for (const end of [-52, -50, -25, 0]) {
+        for (const end of [-52, -50, -25, 0, 5, 20]) {
           const [c, s] = [Math.cos((degrees * Math.PI) / 180), Math.sin((degrees * Math.PI) / 180)];
           const walls = [wall('m', -9000, 0, 9000, 0, 100), wall('n', 5000 * c, end - 5000 * s, 0, end, t)];
           const [mass, plain] = [massOf(walls), drawn(walls)];
@@ -412,10 +412,10 @@ describe('joints', () => {
     expect(Math.max(...joined.get('l')!.body.map(p => p.y))).toBeCloseTo(6800, 6);
   });
 
-  it('a wall takes part in a joint when its centre line passes within 5 mm of it', () => {
-    // two walls of 100 end at one point inside a passing wall of 200, d below its centre line
-    const tips = (d: number) => [...joinWalls([wall('m', -3000, 0, 3000, 0, 200), wall('a', -2000, d - 2000, 0, d, 100), wall('b', 2000, d - 2000, 0, d, 100)]).values()].map(j => j.tips.length);
-    expect([0, 5, 5.1, 20].map(tips)).toEqual([[0, 0, 0], [0, 0, 0], [0, 1, 1], [0, 1, 1]]);
+  it('a wall takes part in a joint that lies in its body or up to 2 mm from it', () => {
+    // two walls of 20 end at one point d below the centre line of a passing wall of 200: inside it, 1 mm or 10 mm below it
+    const tips = (d: number) => [...joinWalls([wall('m', -3000, 0, 3000, 0, 200), wall('a', -2000, d - 2000, 0, d, 20), wall('b', 2000, d - 2000, 0, d, 20)]).values()].map(j => j.tips.length);
+    expect([0, 20, 101, 110].map(tips)).toEqual([[0, 0, 0], [0, 0, 0], [0, 0, 0], [0, 1, 1]]);
   });
 
   it('ends 5 mm apart are one joint, 5.1 mm are two; a wall that passes beside it changes nothing', () => {
