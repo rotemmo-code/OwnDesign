@@ -14,7 +14,7 @@ const ACCEPTED = ['ok', 'ok-offset', 'other-standard', 'nonstandard'];
 const STANDARD_REST = ['ok', 'ok-offset', 'other-standard'];
 /**
  * When the dimensions contradict each other: the one whose removal leaves dimensions that a standard scale explains, and which that
- * scale leaves clearly apart: more than twice as far off as the worst of the rest. A rest explained only by a free (nonstandard) scale
+ * scale leaves clearly apart: more than three times as far off as the worst of the rest. A rest explained only by a free (nonstandard) scale
  * never counts: such a scale can absorb a wrong dimension, and so does "anything but inconsistent", since any 3 dimensions fit some
  * free scale and offset. Only with at least 4 dimensions the fit uses (1 m or more), and only when exactly one removal counts: the
  * mark must never fall on a correct row. Otherwise null.
@@ -199,11 +199,12 @@ export function useCalibrate(index: SnapIndex, plaster: Plaster | null, onPlaste
       {dims.length > 0 && (
         <ol aria-label={c.list}>
           {dims.map((dim, i) => (
-            <li key={i} className={fit.problem?.index === i || odd === i ? 'bad' : undefined} aria-live="polite">
+            <li key={i} className={fit.problem?.index === i || odd === i ? 'bad' : undefined}>
               <span>{c.row(dim.writtenMm, k * length(dim.a, dim.b))}</span>
               {!fit.used[i] && <span> {c.short}</span>}
               {fit.problem?.index === i && <strong> {c.problem[fit.problem.why]}</strong>}
-              {odd === i && <strong> {c.odd}</strong>}
+              {/* Always there, empty unless marked: a live region that appears with its text is not always read. */}
+              <strong aria-live="polite">{odd === i ? ` ${c.odd}` : ''}</strong>
               <button type="button" aria-label={c.removeLabel(i + 1)} onClick={() => setDims(dims.filter((_, j) => j !== i))}>{c.remove}</button>
             </li>
           ))}

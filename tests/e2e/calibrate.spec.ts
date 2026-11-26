@@ -443,7 +443,8 @@ test("the owner's case: three drawn 2.5 cm larger and one 5.2 cm -> that one is 
   await expect(rows(page).nth(3)).toContainText(c.odd);
   await expect(rows(page).nth(3)).toContainText('⁦+5.2⁩');
   await expect(rows(page).nth(3)).toHaveClass('bad');
-  await expect(rows(page).nth(3)).toHaveAttribute('aria-live', 'polite'); // a screen reader hears the mark when it appears
+  await expect(rows(page).nth(3).locator('[aria-live="polite"]')).toHaveText(c.odd); // a screen reader hears the mark, and only the mark
+  for (const i of [0, 1, 2, 3]) await expect(rows(page).nth(i), String(i)).not.toHaveAttribute('aria-live');
   for (const i of [0, 1, 2]) {
     await expect(rows(page).nth(i), String(i)).not.toContainText(c.odd);
     await expect(rows(page).nth(i), String(i)).toContainText('⁦+2.5⁩');
