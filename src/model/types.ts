@@ -45,6 +45,8 @@ export type Opening = {
   review: boolean;
   /** The designer approved place, size and kind; manual ones are confirmed. */
   confirmed: boolean;
+  /** Released by the designer for a correction (8c): a window, an entry door or an opening on a mamad wall is locked otherwise. */
+  released?: boolean;
   status?: Status;
   fromOffset?: number;
 };
@@ -87,6 +89,8 @@ export type Project = {
   /** Read-only. Each plan keeps the calibration it was saved with, whatever the project's is now. */
   plannedArchive: { savedAt: string; state: State; wallClass: Record<Id, WallClass>; calibration: Calibration }[];
   changeableWarningShown: boolean;
+  /** The outer walls (8c). Absent: locked and not confirmed. */
+  envelope?: 'released' | 'confirmed';
   clouds: Cloud[];
   sourceColors: SourceColor[];
 };
@@ -127,7 +131,8 @@ export type Reason =
   | 'invalid-number'
   | 'invalid-action'
   | 'text-too-long'
-  | 'too-many';
+  | 'too-many'
+  | 'envelope-locked';
 export type Notice = 'load-bearing-warning' | 'plaster-in-wall' | { rooms: RoomChange[] };
 export type Result = { ok: true; project: Project; notice?: Notice } | { ok: false; reason: Reason };
 
@@ -143,6 +148,10 @@ export type Action =
   | { type: 'x.deleteSeparator'; id: Id }
   | { type: 'x.clearReview'; id: Id }
   | { type: 'x.confirmOpenings'; ids: Id[] }
+  /** Unlocks the openings for a correction; x.confirmOpenings locks them again (8c). */
+  | { type: 'x.releaseOpenings'; ids: Id[] }
+  | { type: 'x.confirmEnvelope' }
+  | { type: 'x.releaseEnvelope' }
   | { type: 'x.setRoom'; id: Id; name?: string; inApartment?: boolean; outdoor?: boolean }
   /** The answer to a split: part takes the id and name of room, and the other way round. */
   | { type: 'x.keepName'; room: Id; part: Id }

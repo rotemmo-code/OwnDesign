@@ -6,7 +6,16 @@ import { computeRooms } from '../../src/model/rooms';
 import { mamadAllows, mamadSpan, mamadWallsKept, separatorBoundsMamad, suggestedFixed, wallBoundsMamad, wallEntersMamad } from '../../src/model/rules';
 import { ProjectSchema } from '../../src/model/schema';
 import type { Action, Project, Pt, Result, State, Wall } from '../../src/model/types';
-import { boxProject, wall } from '../fixtures/box';
+import { boxProject as lockedBox, wall } from '../fixtures/box';
+
+/**
+ * Task 8's rules are tested with the 8c locks released: the outer walls and every opening. The locks themselves, and
+ * the tests that need them, are in confirm.test.ts and below (lockedBox).
+ */
+const boxProject = (): Project => {
+  const p = lockedBox();
+  return { ...p, envelope: 'released', existing: { ...p.existing, openings: p.existing.openings.map(o => ({ ...o, released: true })) } };
+};
 
 const P = (x: number, y: number): Pt => ({ x, y });
 /** apply, checking the three properties: input untouched, refusal carries nothing, every accepted project parses. */
@@ -270,9 +279,12 @@ it('mamad-locked: a wall moved into the mamad, and the separator that bounds it'
   expect(why(marked, { type: 'x.setWall', id, a: P(4100, 1000) })).toBe('ok');
 });
 
-it('openings on a mamad wall still work in the existing state', () => {
-  const p = mamadOn('room-b');
-  expect(why(p, { type: 'x.addOpening', wallId: 'right', offset: 100, width: 800, kind: 'window' })).toBe('ok');
+it('openings on a mamad wall are locked by default (8c); added freely, corrected after a release', () => {
+  const locked = mamadOn('room-b', { ...lockedBox(), envelope: 'released' });
+  expect(why(locked, { type: 'x.addOpening', wallId: 'right', offset: 100, width: 800, kind: 'window' })).toBe('ok');
+  expect(why(locked, { type: 'x.setOpening', id: 'door', offset: 1100 })).toBe('mamad-locked');
+  expect(why(locked, { type: 'x.deleteOpening', id: 'door' })).toBe('mamad-locked');
+  const p = ok(locked, { type: 'x.releaseOpenings', ids: ['door'] }).project;
   expect(why(p, { type: 'x.setOpening', id: 'door', offset: 1100 })).toBe('ok');
   expect(why(p, { type: 'x.deleteOpening', id: 'door' })).toBe('ok');
   expect(why(p, { type: 'x.confirmOpenings', ids: ['door'] })).toBe('ok');
@@ -410,8 +422,10 @@ it('caps: the 5,001st wall -> too-many within 50 ms; a wall that makes room 1,00
   const p = boxProject();
   const many = Array.from({ length: 4995 }, (_, i) => wall(`z${i}`, 10000 + (i % 70) * 300, 10000 + Math.floor(i / 70) * 300, 10100 + (i % 70) * 300, 10000 + Math.floor(i / 70) * 300, 20));
   const full: Project = { ...p, existing: { ...p.existing, walls: [...p.existing.walls, ...many] } };
-  const t = performance.now();
   expect(why(full, addWall(P(0, 9000), P(1000, 9000)))).toBe('too-many');
+  // the action alone: the helper's deep copy and compare of 5,000 walls is not part of it
+  const t = performance.now();
+  apply(full, addWall(P(0, 9000), P(1000, 9000)));
   expect(performance.now() - t).toBeLessThan(50);
   const lines = Array.from({ length: 1000 }, (_, i) => ({ id: `s${i}`, a: P(-5000 - i, -5000), b: P(-5000 - i, -4000) }));
   expect(why({ ...p, existing: { ...p.existing, separators: lines } }, separator)).toBe('too-many');

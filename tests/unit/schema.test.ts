@@ -393,3 +393,11 @@ it('never calls Function or eval (the CSP forbids both)', () => {
   Reflect.apply(globalThis.eval, undefined, ['1']);
   expect(codeFromText).toBe(2);
 });
+
+it('8c: released on an opening and the envelope state are optional; a file without them parses; other values do not', () => {
+  expect(ok()).toBe(true);
+  expect(each([true, false], v => p => (p.existing.openings[0].released = v))).toEqual([true, true]);
+  expect(each(['released', 'confirmed'], v => p => (p.envelope = v))).toEqual([true, true]);
+  expect(each(['locked', 1, null, 'yes'], v => p => (p.envelope = v))).toEqual([false, false, false, false]);
+  expect(ok(p => (p.existing.openings[0].released = 'yes'))).toBe(false);
+});
