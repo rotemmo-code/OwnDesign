@@ -18,6 +18,10 @@ Project memory for Atelier. Rules for maintaining it are in [`../CLAUDE.md`](../
 
 - [design.md](design.md): the Stitch design system, the eight screens and their state, rules for turning a screen into a page.
 
+## Contributed features
+
+- [pdf-importer.md](pdf-importer.md): contractor PDF to editable floor plan; a separate app under `pdf-importer/` on the `PDF-IMPORTER` branch.
+
 ## History
 
 - [log.md](log.md): append-only record of every action in the project.

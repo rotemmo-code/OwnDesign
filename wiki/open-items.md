@@ -8,6 +8,8 @@ Remove an item when it is resolved and note the resolution in [log.md](log.md).
 - **Invites** never expire and are not bound to the invited email address.
 - **Product name.** "ATELIER" comes from Stitch; the PRD says undecided.
 - **PRD text** still says "no paid API", which the OpenAI decision overrides.
+- **PDF importer and the PRD.** Section 3.3 excludes automatic PDF floor-plan conversion; the importer on the `PDF-IMPORTER` branch does exactly that. Merging it needs the exclusion reconsidered. See [pdf-importer](pdf-importer.md).
+- **PDF importer UI language.** Its screens are planned in Hebrew, right to left, for the designer it was built with; the product decision is an English-only UI.
 
 ## Phase 2 gaps
 

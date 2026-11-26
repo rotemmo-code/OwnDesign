@@ -101,3 +101,9 @@ Several findings fixed (suspended studios, upload race, consultant cap and conte
 ## [2026-11-23] test | Phase 2 verified
 Backend 94 passed, frontend 31 passed. Pages: [testing](testing.md).
 
+## [2026-11-26] build | PDF importer added on the PDF-IMPORTER branch
+A separate browser app under `pdf-importer/` (TypeScript, React, Vite, no backend), imported with its
+history in `3a5b862`. Built so far: safe PDF reading, scale calibration, data model, room geometry.
+Tests at import: 374 unit, 26 edge, 16 browser tests pass; regression needs private samples. Nothing in
+`frontend/`, `backend/` or `supabase/` changed. Pages: [pdf-importer](pdf-importer.md),
+[open-items](open-items.md), [index](index.md).
