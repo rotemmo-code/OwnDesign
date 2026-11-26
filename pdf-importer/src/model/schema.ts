@@ -77,6 +77,7 @@ const opening = z.strictObject({
   kind: z.enum(['door', 'entry', 'window', 'passage']),
   review: z.boolean(),
   confirmed: z.boolean(),
+  released: z.boolean().optional(),
   status,
   fromOffset: mm.optional(),
 });
@@ -144,6 +145,7 @@ export const ProjectSchema = z
       .array(z.strictObject({ savedAt: z.iso.datetime({ precision: 3 }), state: plannedState, wallClass, calibration }))
       .max(CAPS.archive),
     changeableWarningShown: z.boolean(),
+    envelope: z.enum(['released', 'confirmed']).optional(),
     clouds: z
       .array(z.strictObject({ id, a: pt, b: pt, note: z.string().max(CAPS.note), source: z.enum(['manual', 'suggested']) }))
       .max(CAPS.clouds)

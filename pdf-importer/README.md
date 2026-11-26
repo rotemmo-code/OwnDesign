@@ -17,7 +17,7 @@ Work in progress. Built and reviewed so far:
 | Scale calibration from written dimensions | `src/calibrate/` |
 | Project data model and file schema | `src/model/types.ts`, `schema.ts` |
 | Wall joints, rooms, gap closing, measurements, wall kind | `src/model/geo.ts`, `join.ts`, `rooms.ts`, `measure.ts`, `kind.ts` |
-| Every edit of the existing state through one checked transition, with reasons for refusals, the mamad lock, and undo | `src/model/apply.ts`, `existing.ts`, `rules.ts`, `history.ts` |
+| Every edit of the existing state through one checked transition, with reasons for refusals, locks by default (windows, entry door, outer walls, mamad) with deliberate release, and undo | `src/model/apply.ts`, `existing.ts`, `rules.ts`, `history.ts` |
 | Finish layers (plaster or cladding) per wall side and free wall end, and the room that is left (net) | `src/model/finish.ts` |
 | Project file (open, save, download) and autosave draft in the browser | `src/storage/` |
 

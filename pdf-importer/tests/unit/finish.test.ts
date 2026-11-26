@@ -315,7 +315,8 @@ it.each([
 });
 
 it('D3: a finish set before its room is marked as a balcony stays in the file, is neither drawn nor counted', () => {
-  const p = ok(ok(boxProject(), fin('part', 'A', 20)).project, { type: 'x.setRoom', id: 'room-b', outdoor: true }).project;
+  // 8c: marking a balcony changes the envelope, so the outer walls are released first
+  const p = ok(ok({ ...boxProject(), envelope: 'released' }, fin('part', 'A', 20)).project, { type: 'x.setRoom', id: 'room-b', outdoor: true }).project;
   expect(p.existing.walls.find(w => w.id === 'part')!.finishA).toBe(20);
   expect(roomAfterFinish(p.existing, 'room-b')).toBeNull();
   expect(finishStrips(p.existing).has('part')).toBe(false);
