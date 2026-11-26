@@ -71,7 +71,7 @@ function runOn(all: Axis[], q: Pt, out: Pt, l: number, t: number) {
     const near = corners.map(c => seenFrom(m, c, out)).filter(c => holds(m, c.s, c.off));
     if (!near.length) return [];
     const face = Math.min(...near.map(c => (Math.abs(c.off) - m.t / 2) / Math.abs(sine)));
-    return [fits && l > 2 * t ? { middle: false, body: e, joint: e } : { middle: false, body: face, joint: 0 }];
+    return [fits && l > 2 * t + 0.01 ? { middle: false, body: e, joint: e } : { middle: false, body: face, joint: 0 }];
   });
   const used = touches.some(x => x.middle) ? touches.filter(x => x.middle) : touches;
   return { body: Math.max(0, ...used.map(x => x.body)), joint: Math.max(0, ...used.map(x => x.joint)) };

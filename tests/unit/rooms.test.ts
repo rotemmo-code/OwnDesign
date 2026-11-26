@@ -625,6 +625,24 @@ describe('holes', () => {
           }
   });
 
+  it('a wall exactly twice as long as thick touches by a corner like a column at every place; 1 mm longer it joins', () => {
+    // 300 or 301 by 150 in room B, turned by degrees, its leftmost corner on the partition's face; joined, its end fills the
+    // triangle up to that face (at 45 degrees 150 does not fit into the partition of 100, so it never joins)
+    for (const degrees of [20, 30, 45])
+      for (const long of [300, 301]) {
+        const [a, h] = [(degrees * Math.PI) / 180, long / 2];
+        const c = P(3300 + 75 * Math.sin(a) + h * Math.cos(a), 2200);
+        const w = wall('col', c.x - h * Math.cos(a), c.y - h * Math.sin(a), c.x + h * Math.cos(a), c.y + h * Math.sin(a), 150);
+        const fill = long > 300 && degrees < 45 ? (150 ** 2 * Math.tan(a)) / 2 : 0;
+        for (let k = 0; k < 6; k++) {
+          const s = box();
+          const found = computeRooms({ ...s, walls: placed([...s.walls, w], k * 0.9, P(2000 + k * 1311, 4000 - k * 517)), rooms: [] }, []).rooms.map(r => metrics(r).areaMm2).sort((p, q) => p - q);
+          near(found[0], 11.6e6 - long * 150 - fill);
+          near(found[1], 12e6);
+        }
+      }
+  });
+
   it('a closed box that touches a wall at one corner is a hole of the room around it, at any place', () => {
     const [cx, h] = [3300 + 707.1068 + 50 * Math.SQRT2, 707.1068];
     const turned = loop([P(cx - h, 2200), P(cx, 2200 - h), P(cx + h, 2200), P(cx, 2200 + h)], 100, 'k');
