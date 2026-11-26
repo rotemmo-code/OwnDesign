@@ -69,6 +69,41 @@ describe('snapPoint', () => {
   });
 });
 
+describe('pages a file could hold', () => {
+  it('a clip of 300,000 points is no trouble, and its box still counts', () => {
+    const ring: Vec[] = Array.from({ length: 300_000 }, (_, i) => [421 + 300 * Math.cos((i / 300_000) * 2 * Math.PI), 297 + 290 * Math.sin((i / 300_000) * 2 * Math.PI)]);
+    const page = pageOf([stroke([[100, 100], [500, 400]], { clipId: 1 })], [[PAGE], [PAGE, { rings: [ring], evenOdd: false }]]);
+    expect(snap(page, [100, 101])).toEqual({ at: [100, 101], to: null }); // outside the box of the clip
+    expect(snap(page, [500, 399])).toEqual({ at: [500, 400], to: 'end' });
+  });
+  it('100,000 page-wide diagonal pieces: indexed in under 2 s, at most 64 cells each, and found', () => {
+    const diagonal = Array.from({ length: 100_000 }, (_, i): Vec => [(i % 2) * 1684, (i / 100_000) * 1191]);
+    const start = performance.now();
+    const index = snapIndex(pageOf([stroke(diagonal)], [[box(0, 0, 1684, 1191)]], [1684, 1191]));
+    expect(performance.now() - start).toBeLessThan(2000);
+    expect(index.items.length).toBeLessThanOrEqual(64 * 99_999);
+    const t = performance.now();
+    expect(snapPoint([842, 595.6], index, 1).to).not.toBeNull();
+    expect(performance.now() - t).toBeLessThan(200);
+  });
+  it('a page of 200,000 pt has at most a million cells, and still snaps', () => {
+    const page = pageOf([stroke([[100_000, 100_000], [150_000, 100_000]])], [[box(0, 0, 200_000, 200_000)]], [200_000, 200_000]);
+    const index = snapIndex(page);
+    expect(index.cols * index.rows).toBeLessThanOrEqual(1_000_000);
+    expect(snapPoint([100_003, 100_002], index, 5)).toEqual({ at: [100_000, 100_000], to: 'end' });
+    expect(snapPoint([125_000, 100_004], index, 5)).toEqual({ at: [125_000, 100_000], to: 'line' });
+  });
+  it('a piece crossing many cells is found from every cell it crosses, and not from others', () => {
+    const page = pageOf([stroke([[3, 5], [700, 590]])]);
+    const index = snapIndex(page);
+    for (let t = 0; t <= 1; t += 0.01) {
+      const [x, y] = [3 + 697 * t, 5 + 585 * t];
+      expect(snapPoint([x + 0.6, y - 0.6], index, 1).to, String(t)).not.toBeNull();
+    }
+    expect(snapPoint([600, 100], index, 5).to).toBeNull();
+  });
+});
+
 describe('speed', () => {
   let seed = 3;
   const random = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
