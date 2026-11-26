@@ -4,6 +4,7 @@ import { MAX_COLOURS, MAX_FILE_BYTES, MAX_PAGES, MAX_PATHS, MIN_VECTOR_PATHS } f
 import type { Vec } from '../shared';
 
 type Pdfjs = typeof import('pdfjs-dist');
+type LayerConfig = Awaited<ReturnType<PDFDocumentProxy['getOptionalContentConfig']>>;
 
 export type OpenError = 'empty' | 'too-large' | 'not-pdf' | 'locked' | 'corrupt' | 'too-many-pages' | 'too-complex' | 'image-only' | 'timeout' | 'failed';
 type Refusal = { ok: false; code: OpenError };
@@ -46,8 +47,11 @@ export function checkPdfBytes(bytes: Uint8Array): 'empty' | 'too-large' | 'not-p
 
 // shortcut: nothing bounds what pdf.js unpacks before MAX_PATHS is checked, so a hostile file of a few KB can take gigabytes;
 // build the deferred byte-level guard (Task 2) before files from unknown people are opened.
-/** assets: absolute URL of the folder that holds cmaps/ and standard_fonts/, ending in '/'. Node tests leave it out. */
-export async function openDocument(pdfjs: Pdfjs, bytes: Uint8Array, assets?: string): Promise<{ ok: true; doc: PDFDocumentProxy } | Refusal> {
+/**
+ * assets: absolute URL of the folder that holds cmaps/ and standard_fonts/, ending in '/'. Node tests leave it out.
+ * drawing: what a document that is drawn needs besides.
+ */
+export async function openDocument(pdfjs: Pdfjs, bytes: Uint8Array, assets?: string, drawing?: object): Promise<{ ok: true; doc: PDFDocumentProxy } | Refusal> {
   const code = checkPdfBytes(bytes);
   if (code) return refuse(code);
   const task = pdfjs.getDocument({
@@ -60,6 +64,7 @@ export async function openDocument(pdfjs: Pdfjs, bytes: Uint8Array, assets?: str
     verbosity: pdfjs.VerbosityLevel.ERRORS,
     // With useWorkerFetch off or a relative URL, texts that need these files come out empty without an error.
     ...(assets && { useWorkerFetch: true, cMapUrl: `${assets}cmaps/`, standardFontDataUrl: `${assets}standard_fonts/` }),
+    ...drawing,
   });
   let refusal: OpenError;
   try {
@@ -150,12 +155,34 @@ function boxOf(rings: Vec[][]): Box {
 }
 const meet = (a: Box, b: Box): Box => [Math.max(a[0], b[0]), Math.max(a[1], b[1]), Math.min(a[2], b[2]), Math.min(a[3], b[3])];
 
+/**
+ * Takes a page's operators in order and says where each stands. A form or group on a layer that is off is left out whole: pdf.js
+ * would run what is in it without saving the state around it. Reading and drawing both ask here, so the picture shows what is read.
+ */
+export function layerTracker({ OPS }: Pdfjs, groups: LayerConfig): (op: number, args: any) => 'shown' | 'hidden' | 'left out' {
+  const open: boolean[] = []; // the marked content around: whether it shows
+  let leftOut = 0; // forms and groups, inside each other
+  return (op, args) => {
+    const shows = open.at(-1) ?? true;
+    const begins = op === OPS.paintFormXObjectBegin || op === OPS.beginGroup;
+    if (leftOut || (begins && !shows)) {
+      if (begins) leftOut++;
+      else if (op === OPS.paintFormXObjectEnd || op === OPS.endGroup) leftOut--;
+      return 'left out';
+    }
+    if (op === OPS.beginMarkedContent) open.push(shows);
+    else if (op === OPS.beginMarkedContentProps) open.push(shows && (args[0] !== 'OC' || !args[1] || groups.isVisible(args[1])));
+    else if (op === OPS.endMarkedContent) open.pop();
+    return shows ? 'shown' : 'hidden';
+  };
+}
+
 /** The paths in drawing order, or null when the page paints more than MAX_PATHS of them. */
 function readPaths(
   pdfjs: Pdfjs,
   { fnArray, argsArray }: Awaited<ReturnType<PDFPageProxy['getOperatorList']>>,
   view: ReturnType<PDFPageProxy['getViewport']>,
-  groups: Awaited<ReturnType<PDFDocumentProxy['getOptionalContentConfig']>>,
+  groups: LayerConfig,
 ): Pick<ExtractedPage, 'paths' | 'clips'> | null {
   const { OPS, Util } = pdfjs;
   const fillAndStroke = [OPS.fillStroke, OPS.eoFillStroke, OPS.closeFillStroke, OPS.closeEOFillStroke];
@@ -207,20 +234,13 @@ function readPaths(
 
   const paths: PathItem[] = [];
   let painted = 0;
-  let skipped = 0; // open forms and groups that are not entered
+  const layerOf = layerTracker(pdfjs, groups);
 
   for (let i = 0; i < fnArray.length; i++) {
     const op = fnArray[i];
     const args = argsArray[i];
-    // pdf.js neither saves nor restores for a form on a layer that is off. Followed between W and its path only: elsewhere what comes after stays where the file puts it.
-    if ((op === OPS.paintFormXObjectBegin || op === OPS.beginGroup) && !content.visible && (pendingClip || skipped)) {
-      skipped++;
-      continue;
-    }
-    if ((op === OPS.paintFormXObjectEnd || op === OPS.endGroup) && skipped) {
-      skipped--;
-      continue;
-    }
+    const place = layerOf(op, args);
+    if (place === 'left out') continue;
     switch (op) {
       case OPS.save:
         save();
@@ -288,7 +308,7 @@ function readPaths(
           else if (key === 'ca') s.fillAlpha = value;
           else if (key === 'CA') s.strokeAlpha = value;
           else if (key === 'BM') s.blend = value;
-          else if (key === 'SMask') s.masked = value && content.visible; // on a layer that is off pdf.js has no mask to set
+          else if (key === 'SMask') s.masked = value && place === 'shown'; // on a layer that is off pdf.js has no mask to set
         }
         break;
 
@@ -299,7 +319,7 @@ function readPaths(
         const group = args[0] === 'OC' ? args[1] : null; // a group, a membership of several groups by list or by expression, or neither
         const members: string[] = group?.ids ?? group?.expression?.flat(Infinity) ?? [];
         const layer = groups.getGroup(group?.id ?? members.find(id => groups.getGroup(id)))?.name;
-        enter({ visible: content.visible && (!group || groups.isVisible(group)), layer: layer ?? content.layer });
+        enter({ ...content, layer: layer ?? content.layer });
         break;
       }
       case OPS.endMarkedContent:
@@ -323,7 +343,7 @@ function readPaths(
         const scaledWidth = s.width * Math.sqrt(Math.abs(s.ctm[0] * s.ctm[3] - s.ctm[1] * s.ctm[2]));
         const lineWidth = Number.isFinite(scaledWidth) ? scaledWidth : 0;
         // Only what can be seen is read: detection and snapping must not use lines the user does not see.
-        if ((fill || stroke) && content.visible && touches(clipBoxes[s.clipId], boxOf(rings), stroke ? lineWidth / 2 : 0)) {
+        if ((fill || stroke) && place === 'shown' && content.visible && touches(clipBoxes[s.clipId], boxOf(rings), stroke ? lineWidth / 2 : 0)) {
           paths.push({
             fill,
             stroke,
