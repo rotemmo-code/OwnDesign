@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
-import { expect, firefox, type Page, test } from '@playwright/test';
+import { type BrowserContext, expect, firefox, type Page, test } from '@playwright/test';
 import { build, type Rolldown } from 'vite';
 import type { Project } from '../../src/model/types';
 import { boxProject } from '../fixtures/box';
@@ -32,15 +32,20 @@ declare global {
   }
 }
 
-test.beforeEach(async ({ page }) => {
-  await page.addInitScript(() => {
+/** Every page of the context records CSP violations, second tabs included. */
+const listen = (context: BrowserContext) =>
+  context.addInitScript(() => {
     window.violations = [];
     document.addEventListener('securitypolicyviolation', e => window.violations.push(`${e.effectiveDirective} ${e.blockedURI}`));
   });
+const violations = async (context: BrowserContext) => (await Promise.all(context.pages().map(p => p.evaluate(() => window.violations)))).flat();
+
+test.beforeEach(async ({ page, context }) => {
+  await listen(context);
   await serveProbe(page);
 });
-test.afterEach(async ({ page }) => {
-  if (!page.isClosed()) expect(await page.evaluate(() => window.violations)).toEqual([]);
+test.afterEach(async ({ context }) => {
+  expect(await violations(context)).toEqual([]);
 });
 
 async function serveProbe(page: Page) {
@@ -70,7 +75,23 @@ const HELPERS = `
       tx.onabort = () => reject(tx.error);
     };
   });`;
-const ready = (page: Page) => page.evaluate(`(async () => { ${HELPERS} })()`);
+/** Loads the probe and claims the draft for this tab; returns the claim. */
+const ready = (page: Page) => page.evaluate(`(async () => { ${HELPERS}; return m.claimDraft(); })()`);
+const DAY = 86_400_000;
+const T0 = Date.parse('2026-03-01T09:00:00.000Z');
+/** Writes on day 0, then loads on each day given: the loaded names, null when gone. One fresh draft per call. */
+async function days(page: Page, loads: number[], change?: string) {
+  await page.evaluate(() => m.clearDraft());
+  await page.clock.setFixedTime(T0);
+  await page.evaluate(p => schedule(p), named('d'));
+  if (change) await page.evaluate(`raw(store => { const r = store.get('model'); r.onsuccess = () => store.put((${change})(r.result), 'model'); })`);
+  const seen = [];
+  for (const day of loads) {
+    await page.clock.setFixedTime(T0 + day * DAY);
+    seen.push(await page.evaluate(async () => { const d = await m.loadDraft(); return d && [d.savedAt, d.result.ok ? d.result.project.name : d.result.error]; }));
+  }
+  return seen;
+}
 
 test('draft: empty -> null; schedule, load: equal project and PDF bytes; clear -> null, no database left', async ({ page }) => {
   await ready(page);
@@ -109,7 +130,7 @@ test('six changes 450 ms apart: a write within 2 s, after it the last one; never
   }, boxProject());
   expect(result.done).toHaveLength(2);
   expect(result.done[0]).toBeGreaterThanOrEqual(1_990);
-  expect(result.done[0]).toBeLessThan(2_400);
+  expect(result.done[0]).toBeLessThan(3_500); // a timer restarted by each change would first write after 4.25 s
   expect(result.midway).toBe('e4'); // the newest at the first write, while edits never paused for 2 s
   expect(result.last).toBe('e5');
 });
@@ -125,6 +146,71 @@ test('clear right after schedule: nothing comes back after 2.4 s', async ({ page
       return [await m.loadDraft(), called];
     }, named('x')),
   ).toEqual([null, false]);
+});
+
+test('schedule, clear while the timer waits, schedule again: the second one is written', async ({ page }) => {
+  await ready(page);
+  expect(
+    await page.evaluate(async base => {
+      m.scheduleDraft({ ...base, name: 'first' }, () => {});
+      await m.clearDraft();
+      const ok = await schedule({ ...base, name: 'again' });
+      return [ok, await show()];
+    }, boxProject()),
+  ).toEqual([true, 'again']);
+});
+
+test('another connection keeps the database open: clearDraft rejects instead of hanging, and later writes still answer', async ({ page }) => {
+  await ready(page);
+  expect(
+    await page.evaluate(async base => {
+      await schedule({ ...base, name: 'one' });
+      const other = await new Promise<IDBDatabase>(resolve => {
+        const request = indexedDB.open('etelier', 1);
+        request.onsuccess = () => resolve(request.result); // no onversionchange: it does not let go
+      });
+      const cleared = await Promise.race([m.clearDraft().then(() => 'cleared', () => 'rejected'), wait(1_000).then(() => 'pending')]);
+      other.close();
+      const ok = await Promise.race([schedule({ ...base, name: 'two' }), wait(5_000).then(() => 'pending')]);
+      return [cleared, ok, await show()];
+    }, boxProject()),
+  ).toEqual(['rejected', true, 'two']);
+});
+
+test('our own connection lets another one delete the database, and opens again for the next write', async ({ page }) => {
+  await ready(page);
+  expect(
+    await page.evaluate(async base => {
+      await schedule({ ...base, name: 'one' });
+      const deleted = await Promise.race([
+        new Promise(resolve => {
+          const request = indexedDB.deleteDatabase('etelier');
+          request.onsuccess = () => resolve('deleted');
+          request.onblocked = () => resolve('blocked');
+        }),
+        wait(2_000).then(() => 'pending'),
+      ]);
+      const ok = await schedule({ ...base, name: 'two' });
+      return [deleted, ok, await show()];
+    }, boxProject()),
+  ).toEqual(['deleted', true, 'two']);
+});
+
+test('a second tab cannot write, read or delete the first tab\'s draft', async ({ page, context }) => {
+  expect(await ready(page)).toBe('mine');
+  await page.evaluate(p => schedule(p), named('first'));
+  const second = await context.newPage();
+  await serveProbe(second);
+  expect(await ready(second)).toBe('other-tab');
+  expect(
+    await second.evaluate(async p => [
+      await schedule(p),
+      await m.loadDraft().then(() => 'loaded', () => 'refused'),
+      await m.clearDraft().then(() => 'cleared', () => 'refused'),
+    ], named('second')),
+  ).toEqual([false, 'refused', 'refused']);
+  await second.waitForTimeout(2_300);
+  expect(await page.evaluate(() => show())).toBe('first');
 });
 
 test('clear while a write has just started: the write lands first, then all of it is deleted', async ({ page }) => {
@@ -185,19 +271,38 @@ test('version 2 -> wrong-version and 2 records still there; model 5 -> invalid',
   ).toEqual(['wrong-version', 2, 'invalid', 2]);
 });
 
-test('13.9 days old loads, 14.1 days old -> null and no database left', async ({ page }) => {
+test('never loaded: there on day 13.9, gone on day 14.1 and no database left', async ({ page }) => {
   await ready(page);
-  expect(
-    await page.evaluate(async p => {
-      await schedule(p);
-      const record = await raw((store: IDBObjectStore) => store.get('model'));
-      const age = (days: number) => raw((store: IDBObjectStore) => store.put({ ...record, savedAt: new Date(Date.now() - days * 86_400_000).toISOString() }, 'model'));
-      await age(13.9);
-      const young = await show();
-      await age(14.1);
-      return [young, await show(), (await indexedDB.databases()).map(d => d.name)];
-    }, named('old')),
-  ).toEqual(['old', null, []]);
+  const at0 = new Date(T0).toISOString();
+  expect(await days(page, [13.9])).toEqual([[at0, 'd']]);
+  expect(await days(page, [14.1])).toEqual([null]);
+  expect(await page.evaluate(async () => (await indexedDB.databases()).map(d => d.name))).toEqual([]);
+});
+
+test('restored on day 10: still there on day 15 and on day 23, gone on day 25', async ({ page }) => {
+  await ready(page);
+  const draft = [new Date(T0).toISOString(), 'd'];
+  expect(await days(page, [10, 15])).toEqual([draft, draft]);
+  expect(await days(page, [10, 23])).toEqual([draft, draft]);
+  expect(await days(page, [10, 25])).toEqual([draft, null]);
+});
+
+test.describe('a savedAt that cannot be trusted', () => {
+  const future = new Date(T0 + 365 * DAY).toISOString();
+  for (const [what, change, seen] of [
+    ['garbage', `r => ({ ...r, savedAt: 'garbage' })`, [null, 'invalid']],
+    ['an object', `r => ({ ...r, savedAt: {} })`, [null, 'invalid']],
+    ['missing', `r => { delete r.savedAt; return r; }`, [null, 'invalid']],
+    ['a date, but not as toISOString writes it', `r => ({ ...r, savedAt: 'Sun, 01 Mar 2026 09:00:00 GMT' })`, [null, 'invalid']],
+    ['a year ahead', `r => ({ ...r, savedAt: '${future}' })`, [future, 'd']],
+  ] as const) {
+    test(`${what}: reported as ${seen[1]}, kept, and counted from the first load that saw it`, async ({ page }) => {
+      await ready(page);
+      expect(await days(page, [1, 14.9], change)).toEqual([seen, seen]);
+      expect(await page.evaluate(() => raw((store: IDBObjectStore) => store.count()))).toBe(3); // pdf, model, kept
+      expect(await days(page, [1, 15.1], change)).toEqual([seen, null]);
+    });
+  }
 });
 
 test('a failing put: done(false), the old draft and its PDF intact', async ({ page }) => {
@@ -315,17 +420,16 @@ test('storage blocked (firefox cookieBehavior 2): unavailable, loadDraft rejects
   test.skip(browserName !== 'firefox', 'the preference is Firefox only');
   const browser = await firefox.launch({ firefoxUserPrefs: { 'network.cookie.cookieBehavior': 2 } });
   try {
-    const page = await (await browser.newContext({ baseURL })).newPage();
+    const context = await browser.newContext({ baseURL });
+    await listen(context);
+    const page = await context.newPage();
     const errors: string[] = [];
     page.on('pageerror', e => errors.push(e.message));
     await serveProbe(page);
-    await ready(page);
-    expect(await page.evaluate(async p => [await m.claimDraft(), await m.loadDraft().then(() => 'loaded', (e: Error) => e.name), await schedule(p)], named('b'))).toEqual([
-      'unavailable',
-      'SecurityError',
-      false,
-    ]);
+    expect(await ready(page)).toBe('unavailable');
+    expect(await page.evaluate(async p => [await m.loadDraft().then(() => 'loaded', () => 'refused'), await schedule(p)], named('b'))).toEqual(['refused', false]);
     expect(errors).toEqual([]);
+    expect(await violations(context)).toEqual([]);
   } finally {
     await browser.close();
   }

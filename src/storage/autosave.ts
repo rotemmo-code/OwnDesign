@@ -3,25 +3,30 @@ import { checkProject, type Parsed } from './projectFile';
 
 /** The newest project is written at most this long after the first unsaved change. */
 const DELAY_MS = 2_000;
-/** A draft older than this is deleted when the app next opens (owner decision 10.1). */
+/** Days without the draft being written or opened, after which the next opening deletes it (owner decision 10.1). */
 const KEEP_DAYS = 14;
+const DAY_MS = 86_400_000;
 const DB = 'etelier';
 const STORE = 'draft';
 
-export type Draft = { savedAt: string; result: Parsed };
+/** savedAt null: the draft's time could not be read, and result then fails the check. */
+export type Draft = { savedAt: string | null; result: Parsed };
 type Stored = { savedAt: string; model: Omit<Project, 'pdfBase64'> };
 
-/** Only the first tab backs up (owner decision 10.2). Call once at start; the other functions only where it said 'mine'. */
+let mine = false;
+/** Only the first tab backs up (owner decision 10.2). The other functions refuse in a tab that did not get 'mine'. */
 export const claimDraft = (): Promise<'mine' | 'other-tab' | 'unavailable'> =>
   new Promise(resolve => {
     if (!navigator.locks) return resolve('unavailable');
     navigator.locks
       .request('etelier-draft', { ifAvailable: true }, lock => {
+        mine = lock !== null;
         resolve(lock ? 'mine' : 'other-tab');
         return lock && new Promise<never>(() => {}); // held until the tab is gone
       })
       .catch(() => resolve('unavailable'));
   });
+const notMine = () => Promise.reject(new Error('this tab does not hold the draft'));
 
 let db: IDBDatabase | undefined;
 let stored: string | undefined; // the pdfBase64 the store holds
@@ -39,8 +44,13 @@ const open = () =>
     request.onupgradeneeded = () => request.result.createObjectStore(STORE);
     request.onerror = () => reject(request.error);
     request.onsuccess = () => {
-      request.result.onclose = () => (db = undefined); // e.g. the user cleared the site's data
-      resolve(request.result);
+      const opened = request.result;
+      // another connection wants to delete the database (or the user cleared site data): let it, open again next time
+      opened.onclose = opened.onversionchange = () => {
+        opened.close();
+        if (db === opened) db = stored = undefined;
+      };
+      resolve(opened);
     };
   });
 
@@ -74,6 +84,7 @@ let timer: ReturnType<typeof setTimeout> | undefined;
 let latest: Project;
 /** A running timer is not restarted, so edits that never pause are still backed up (owner decision 10.7). */
 export function scheduleDraft(p: Project, done: (ok: boolean) => void): void {
+  if (!mine) return queueMicrotask(() => done(false));
   latest = p;
   timer ??= setTimeout(() => {
     timer = undefined;
@@ -84,25 +95,48 @@ export function scheduleDraft(p: Project, done: (ok: boolean) => void): void {
   }, DELAY_MS);
 }
 
-/** Rejects when storage is blocked. A draft that fails the check is kept: the user decides (owner decision 10.6). */
-export const loadDraft = (): Promise<Draft | null> =>
-  inTurn(async () => {
-    let pdf!: IDBRequest, record!: IDBRequest;
+/** A time as toISOString writes it, else null. */
+const readTime = (value: unknown): number | null => {
+  if (typeof value !== 'string') return null;
+  const time = Date.parse(value);
+  return Number.isFinite(time) && new Date(time).toISOString() === value ? time : null;
+};
+
+/**
+ * Rejects when storage is blocked. A draft that fails the check is kept: the user decides (owner decision 10.6).
+ * Expiry counts from the later of the last write and the last load that passed the check (the 'kept' record); a draft
+ * whose time is unreadable or in the future counts from the first load that saw it.
+ */
+export const loadDraft = (): Promise<Draft | null> => {
+  if (!mine) return notMine();
+  return inTurn(async () => {
+    let pdf!: IDBRequest, record!: IDBRequest, kept!: IDBRequest;
     await run('readonly', store => {
       pdf = store.get('pdf');
       record = store.get('model');
+      kept = store.get('kept');
     });
-    const draft = record.result as Stored | undefined;
-    if (!draft) return null;
-    if (Date.now() - Date.parse(draft.savedAt) > KEEP_DAYS * 86_400_000) {
+    const draft = record.result as Partial<Stored> | null | undefined;
+    if (draft === undefined) return null;
+    const now = Date.now();
+    const savedAt = readTime(draft?.savedAt);
+    const since = Math.max(savedAt !== null && savedAt <= now ? savedAt : -Infinity, readTime(kept.result) ?? -Infinity);
+    if (now - since > KEEP_DAYS * DAY_MS && since !== -Infinity) {
       await remove();
       return null;
     }
-    return { savedAt: draft.savedAt, result: checkProject({ ...draft.model, pdfBase64: pdf.result }) };
+    const result: Parsed = savedAt === null ? { ok: false, error: 'invalid' } : checkProject({ ...draft!.model, pdfBase64: pdf.result });
+    if (result.ok || since === -Infinity) {
+      // one small record, not the PDF; a failure here does not fail the load
+      await run('readwrite', store => store.put(new Date(now).toISOString(), 'kept')).catch(() => {});
+    }
+    return { savedAt: savedAt === null ? null : draft!.savedAt!, result };
   });
+};
 
 /** Cancels a waiting write, lets one in progress finish, then deletes the database. */
 export function clearDraft(): Promise<void> {
+  if (!mine) return notMine();
   clearTimeout(timer);
   timer = undefined;
   return inTurn(remove);
@@ -115,6 +149,8 @@ function remove(): Promise<void> {
   return new Promise((resolve, reject) => {
     const request = indexedDB.deleteDatabase(DB);
     request.onsuccess = () => resolve();
-    request.onerror = request.onblocked = () => reject(request.error ?? new Error('blocked by another connection'));
+    request.onerror = () => reject(request.error);
+    // not request.error: reading it throws while the request is still pending
+    request.onblocked = () => reject(new Error('another connection keeps the draft open'));
   });
 }
