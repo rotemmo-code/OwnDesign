@@ -47,8 +47,8 @@ defects, for example a diagonal wall touching another only by a corner that left
 ## Tests
 
 `cd pdf-importer && npm ci && npm run verify`: typecheck, unit, edge, regression and browser tests
-(Chromium and Firefox), then `npm audit`. After the calibration screen was merged: 579 unit, 43 edge and
-248 browser tests pass; the 20 regression tests need private sample drawings and skip without them.
+(Chromium and Firefox), then `npm audit`. After the calibration follow-up was merged: 591 unit, 43 edge and
+254 browser tests pass; the 20 regression tests need private sample drawings and skip without them.
 
 ## Privacy
 

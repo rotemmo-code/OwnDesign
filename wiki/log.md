@@ -171,3 +171,13 @@ Review found the snap preview went stale after a zoom without a pointer move (th
 7 cm off at 1:50) and a clip of 300,000 points crashed the page; both fixed, marks got an outline for
 contrast. Tests: 579 unit, 43 edge, 248 browser. Not checked: real drawings, touchpads, Safari.
 Pages: [pdf-importer](pdf-importer.md).
+
+## [2026-11-26] test | PDF importer: calibration tried by the user on real drawings
+Two blind tests: Claude chose dimensions and measured them from the file's geometry, the user marked
+the same dimensions in the app; all nine agreed within 0.2 cm. One plan verified at 1:50 with a
+constant offset of about 5 cm (written dimensions are net), the other at 1:50 with none. The first
+attempt showed a gap: with contradicting dimensions the screen did not say which one differed.
+Added: the signed difference on every row, and a mark on the one dimension that differs from the
+others, worded as an invitation to check (in that first attempt the three that agreed were the wrong
+ones). Review tightened the rule until random tests marked no correct row. Tests: 591 unit, 43 edge,
+254 browser. Pages: [pdf-importer](pdf-importer.md).
