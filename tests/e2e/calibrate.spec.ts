@@ -434,6 +434,45 @@ test('Escape and both cancel buttons give the focus back to the drawing', async 
   }
 });
 
+const rows = (page: Page) => page.getByRole('list', { name: c.list }).getByRole('listitem');
+
+test("the owner's case: three drawn 2.5 cm larger and one 5.2 cm -> that one is marked; deleting it and marking a fitting one verifies", async ({ page }) => {
+  await open(page);
+  for (const [mark, typed] of [[DIMS.outer, '637.5'], [DIMS.heightA, '397.5'], [DIMS.roomB, '287.5'], [DIMS.roomA, '294.8']] as const) await markMm(page, 50, mark, typed);
+  await expect(fitBox(page)).toHaveText(c.inconsistent);
+  await expect(rows(page).nth(3)).toContainText(c.odd);
+  await expect(rows(page).nth(3)).toContainText('⁦+5.2⁩');
+  await expect(rows(page).nth(3)).toHaveClass('bad');
+  for (const i of [0, 1, 2]) {
+    await expect(rows(page).nth(i), String(i)).not.toContainText(c.odd);
+    await expect(rows(page).nth(i), String(i)).toContainText('⁦+2.5⁩');
+  }
+  await page.getByRole('button', { name: c.removeLabel(4) }).click();
+  await markMm(page, 50, DIMS.part120, '117.5');
+  await expect(fitBox(page)).toHaveText(c.offset(50, 25) + c.go(50));
+  await expect(page.getByText(c.odd)).toHaveCount(0);
+});
+
+test('two bad dimensions out of five: nothing is marked', async ({ page }) => {
+  await open(page);
+  for (const [mark, typed] of [[DIMS.outer, '637.5'], [DIMS.heightA, '397.5'], [DIMS.roomB, '287.5'], [DIMS.roomA, '294.8'], [DIMS.part120, '114']] as const) await markMm(page, 50, mark, typed);
+  await expect(fitBox(page)).toHaveText(c.inconsistent);
+  await expect(rows(page)).toHaveCount(5);
+  await expect(page.getByText(c.odd)).toHaveCount(0);
+  await expect(page.locator('li.bad')).toHaveCount(0);
+});
+
+test('every row shows drawn minus written, signed, before any scale is accepted too: +5.2, -1.0, 0.0', async ({ page }) => {
+  await open(page);
+  for (const [typed, shown] of [['294.8', '+5.2'], ['301', '-1.0'], ['300', '0.0']]) {
+    await markMm(page, 50, DIMS.roomA, typed);
+    await expect(fitBox(page), typed).toContainText(c.need.count);
+    await expect(rows(page), typed).toHaveText([`${c.row(Number(typed) * 10, 3000)}${c.remove}`]);
+    await expect(rows(page), typed).toContainText(`הפרש ⁦${shown}⁩`);
+    await page.getByRole('button', { name: c.removeLabel(1) }).click();
+  }
+});
+
 describeSamples('samples', () => {
   // Needs the points of Task 13's truth files; until they exist it is skipped.
   test.skip('S14 with 1:50 chosen is caught; the scale lands between 1:121 and 1:124', () => {});

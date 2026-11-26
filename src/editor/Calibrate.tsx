@@ -10,6 +10,20 @@ import { type Snap, type SnapIndex, snapPoint } from './snap';
 const c = copy.calibrate;
 const length = ([ax, ay]: Vec, [bx, by]: Vec) => Math.hypot(bx - ax, by - ay);
 const ACCEPTED = ['ok', 'ok-offset', 'other-standard', 'nonstandard'];
+/**
+ * When the dimensions contradict each other: the one whose removal leaves dimensions that a scale explains, or null. A removal counts
+ * when the rest is accepted, or fits a standard scale within its tolerance (the fit then offers its button). Any 3 dimensions are
+ * explained by some free scale and offset, so "anything but inconsistent" would name several. One such dimension only, at least 4.
+ */
+export function oddOne(dims: Dim[], chosen: 50 | 100): number | null {
+  if (dims.length < 4 || fitCalibration(dims, chosen).status !== 'inconsistent') return null;
+  const explained = dims.flatMap((_, i) => {
+    const rest = fitCalibration(dims.filter((_, j) => j !== i), chosen);
+    return rest.unverified || ACCEPTED.includes(rest.status) ? [i] : [];
+  });
+  return explained.length === 1 ? explained[0] : null;
+}
+
 /** After the number field or a cancel button goes, the keyboard goes on marking. */
 const backToDrawing = () => document.querySelector<SVGSVGElement>('svg[role="application"]')?.focus();
 
@@ -59,6 +73,7 @@ export function useCalibrate(index: SnapIndex, plaster: Plaster | null, onPlaste
   const [wrong, setWrong] = useState(false);
   const [near, setNear] = useState<{ at: Vec; radius: number } | null>(null);
   const fit = useMemo(() => fitCalibration(dims, chosen), [dims, chosen]);
+  const odd = useMemo(() => oddOne(dims, chosen), [dims, chosen]);
   const from = draft && !draft.b ? draft.a : undefined;
   const hovered = near && snapPoint(near.at, index, near.radius, from);
 
@@ -173,10 +188,11 @@ export function useCalibrate(index: SnapIndex, plaster: Plaster | null, onPlaste
       {dims.length > 0 && (
         <ol aria-label={c.list}>
           {dims.map((dim, i) => (
-            <li key={i} className={fit.problem?.index === i ? 'bad' : undefined}>
+            <li key={i} className={fit.problem?.index === i || odd === i ? 'bad' : undefined}>
               <span>{c.row(dim.writtenMm, k * length(dim.a, dim.b))}</span>
               {!fit.used[i] && <span> {c.short}</span>}
               {fit.problem?.index === i && <strong> {c.problem[fit.problem.why]}</strong>}
+              {odd === i && <strong> {c.odd}</strong>}
               <button type="button" aria-label={c.removeLabel(i + 1)} onClick={() => setDims(dims.filter((_, j) => j !== i))}>{c.remove}</button>
             </li>
           ))}
