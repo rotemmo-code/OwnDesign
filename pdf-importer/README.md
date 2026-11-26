@@ -15,13 +15,14 @@ Work in progress. Built and reviewed so far:
 | Safe PDF reading in a worker, vector path extraction | `src/pdf/` |
 | First screen: upload, page choice, sharp page with zoom and pan | `src/editor/`, `src/pdf/render.ts` |
 | Scale calibration from written dimensions | `src/calibrate/` |
+| Calibration screen: mark written dimensions with snapping, fit the scale, measure freely to check | `src/editor/Calibrate.tsx`, `MeasureTool.tsx`, `snap.ts` |
 | Project data model and file schema | `src/model/types.ts`, `schema.ts` |
 | Wall joints, rooms, gap closing, measurements, wall kind | `src/model/geo.ts`, `join.ts`, `rooms.ts`, `measure.ts`, `kind.ts` |
 | Every edit of the existing state through one checked transition, with reasons for refusals, locks by default (windows, entry door, outer walls, mamad) with deliberate release, and undo | `src/model/apply.ts`, `existing.ts`, `rules.ts`, `history.ts` |
 | Finish layers (plaster or cladding) per wall side and free wall end, and the room that is left (net) | `src/model/finish.ts` |
 | Project file (open, save, download) and autosave draft in the browser | `src/storage/` |
 
-Not built yet: the calibration and editor screens, the save buttons, wall detection, the planned state, PDF output.
+Not built yet: the editor screen, the save buttons, wall detection, the planned state, PDF output.
 Scanned (image-only) PDFs are out of scope for this version.
 
 ## Run

@@ -1,4 +1,4 @@
-import type { Dim, Vec } from '../shared';
+import type { Calibration, Dim, Vec } from '../shared';
 
 export type FitStatus = 'ok' | 'ok-offset' | 'other-standard' | 'nonstandard' | 'need-more' | 'inconsistent' | 'invalid';
 
@@ -12,7 +12,8 @@ export type Fit = {
   residualsMm: number[];
   /** False: written value under 1 m, so the dimension is listed but not used for the scale. */
   used: boolean[];
-  need?: 'count' | 'long' | 'spread' | 'ambiguous';
+  /** offset: one scale explains the dimensions, but its constant offset is outside OFFSET_OK, so more dimensions cannot help. */
+  need?: 'count' | 'long' | 'spread' | 'ambiguous' | 'offset';
   /** A nonstandard scale within 3 % of this standard one. */
   near?: 50 | 100;
   /** The first bad entry of `dims`; only with `invalid`. */
@@ -138,6 +139,7 @@ export function fitCalibration(dims: Dim[], chosen: 50 | 100): Fit {
     if (c === undefined) continue;
     const enough = c === 0 || n > MIN_DIMS; // an offset is one more unknown
     if (enough && plausible(c) && pinned(k, c)) return accept(scale !== chosen ? 'other-standard' : c === 0 ? 'ok' : 'ok-offset', k, c);
+    if (enough && pinned(k, c)) return refuse('need-more', { need: 'offset' }); // the scale is certain, its offset is not accepted: more dimensions cannot help
     return refuse('need-more', { need: enough ? 'spread' : 'count', ...(plausible(c) ? button(scale, c) : {}) });
   }
 
@@ -151,7 +153,8 @@ export function fitCalibration(dims: Dim[], chosen: 50 | 100): Fit {
   const c1 = k1 * dm - wm;
   const scaleAndOffset = n > MIN_DIMS && Math.abs(c1) <= MAX_OFFSET + EPS && within(residuals(k1, c1), floors);
   const nonstandard = (k: number, c: number): Fit => {
-    if (!plausible(c) || !pinned(k, c)) return refuse('need-more', { need: 'spread' });
+    if (!pinned(k, c)) return refuse('need-more', { need: 'spread' });
+    if (!plausible(c)) return refuse('need-more', { need: 'offset' });
     const near = STANDARD.find(s => Math.abs(k / mmPerPtAt(s) - 1) <= NEAR + RATIO_EPS);
     return accept('nonstandard', k, c, near ? { near } : {});
   };
@@ -162,4 +165,16 @@ export function fitCalibration(dims: Dim[], chosen: 50 | 100): Fit {
   if (scaleAndOffset) return nonstandard(k1, c1);
   // Three that some scale and offset explain: one more dimension can tell. Nothing can help when none does.
   return n === MIN_DIMS && scaleRange(d, w, tolerances) !== null ? refuse('need-more', { need: 'count' }) : refuse('inconsistent');
+}
+
+const ACCEPTED: readonly FitStatus[] = ['ok', 'ok-offset', 'other-standard', 'nonstandard'];
+
+/**
+ * The only way to a Calibration. 'accept': verified, when the fit of these very dimensions accepts a scale. 'unverified': through the
+ * "no more dimensions" button, only when the fit offers it, with the numbers it offers. null otherwise.
+ */
+export function calibrationOf(dims: Dim[], chosen: 50 | 100, how: 'accept' | 'unverified'): Calibration | null {
+  const fit = fitCalibration(dims, chosen);
+  if (how === 'unverified') return fit.unverified ? { ...fit.unverified, chosen, dims, verified: false } : null;
+  return ACCEPTED.includes(fit.status) ? { scale: fit.scale, mmPerPt: fit.mmPerPt, offsetMm: fit.offsetMm, chosen, dims, verified: true } : null;
 }

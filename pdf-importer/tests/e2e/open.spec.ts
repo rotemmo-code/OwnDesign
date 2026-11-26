@@ -44,6 +44,7 @@ const onPage = (page: Page, x: number, y: number) =>
   }, [x, y]);
 /** The colours on the screen of a strip of pixels that starts at a view point. */
 async function pixels(page: Page, x: number, y: number, count = 1) {
+  await page.mouse.move(0, 0); // off the drawing: no snap mark in the picture
   const at = await onScreen(page, x, y);
   const png = await page.screenshot({ clip: { x: Math.floor(at.x), y: Math.floor(at.y), width: count, height: 1 } });
   return page.evaluate(async data => {
@@ -120,6 +121,9 @@ test('every pixel of the picture is one of the screen, at any density', async ({
     await sharp(page);
     for (const zoom of [0, 5]) {
       if (zoom) await redrawn(page, async () => { for (let i = 0; i < zoom; i++) await page.keyboard.press('+'); });
+      const middle = await onScreen(page, 421, 297.5);
+      await page.mouse.move(middle.x, middle.y); // the pointer hides the point Enter would place,
+      await page.mouse.move(0, 0); // and away from the drawing it leaves no snap mark
       const shot = await page.screenshot(); // the whole window: a part of it is scaled when its corner is not on a pixel
       const off = await canvas(page).evaluate(async (svg: SVGSVGElement, shot) => {
         const drawn = svg.parentElement!.querySelectorAll('canvas')[1];
@@ -206,7 +210,7 @@ test('a screen with more pixels than MAX_IMAGE_PIXELS gets a picture of no more'
   await page.close();
 });
 
-test('drags with the middle button, or with space and the left one; the left one alone does nothing', async ({ page }) => {
+test('drags with the left or middle button, or with space and the left one; a click does not move the view', async ({ page }) => {
   await open(page, planPdf());
   const from = await onScreen(page, 300, 200);
   const drag = async (button: 'left' | 'middle') => {
@@ -218,15 +222,15 @@ test('drags with the middle button, or with space and the left one; the left one
     const to = await onPage(page, from.x + 60, from.y + 40);
     return to.map(Math.round);
   };
-  expect(await drag('left')).not.toEqual([300, 200]);
-  expect(await viewBox(page)).toEqual([0, 0, 842, 595]);
+  expect(await drag('left')).toEqual([300, 200]);
+  await page.keyboard.press('0');
   expect(await drag('middle')).toEqual([300, 200]);
   await page.keyboard.press('0');
   await page.keyboard.down(' ');
   expect(await drag('left')).toEqual([300, 200]);
   await page.keyboard.up(' ');
   const still = await viewBox(page);
-  await drag('left');
+  await page.mouse.click(from.x, from.y);
   expect(await viewBox(page)).toEqual(still);
 });
 
