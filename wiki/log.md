@@ -128,3 +128,12 @@ loss paths: backups stopping after the first save, a second tab overwriting the 
 and a wrong system clock deleting a draft. User decision: a draft older than 14 days is flagged and
 asked about, never deleted silently. Tests: 428 unit, 26 edge, 202 browser. Not checked: Safari, the
 native save dialog, a real full disk. Pages: [pdf-importer](pdf-importer.md).
+
+## [2026-11-26] build | PDF importer: one checked transition for edits, undo, mamad lock
+`apply(project, action)` accepts or refuses every edit of the existing state with a reason, never
+mutates its input, and checks each accepted project against the file schema; history gives 100 undo
+steps. User rules: the walls of the protected room (mamad) cannot be edited and nothing can be built
+inside it while it is marked; its door and window can be corrected; two doors or two windows in one
+mamad opening are valid. Review found a long wall could still reach into the mamad and a chain of
+three overlapping doors was accepted; both fixed (the mamad's outline must come out unchanged).
+Tests: 482 unit, 28 edge (30,000-step random walk), 202 browser. Pages: [pdf-importer](pdf-importer.md).

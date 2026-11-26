@@ -30,6 +30,7 @@ measurements. Source: [`../pdf-importer/`](../pdf-importer/README.md).
 | Scale calibration from the drawing's written dimensions | `pdf-importer/src/calibrate/fit.ts` |
 | Project data model and project-file schema (zod) | `pdf-importer/src/model/types.ts`, `schema.ts` |
 | Wall joints, room finding, gap closing up to 2 mm, room split, measurements, wall kind | `pdf-importer/src/model/geo.ts`, `join.ts`, `rooms.ts`, `measure.ts`, `kind.ts` |
+| One checked transition for every edit of the existing state: reasons for refusals, undo, and a lock that keeps the protected room (mamad) unchanged | `pdf-importer/src/model/apply.ts`, `existing.ts`, `rules.ts`, `history.ts` |
 | Project file (open, save, download) and an autosave draft in IndexedDB; an old draft is never deleted without asking | `pdf-importer/src/storage/` |
 
 Not built yet: calibration and editor screens, the save buttons, wall detection, the planned
@@ -44,7 +45,7 @@ defects, for example a diagonal wall touching another only by a corner that left
 ## Tests
 
 `cd pdf-importer && npm ci && npm run verify`: typecheck, unit, edge, regression and browser tests
-(Chromium and Firefox), then `npm audit`. After storage was merged: 428 unit, 26 edge and
+(Chromium and Firefox), then `npm audit`. After the state transition was merged: 482 unit, 28 edge and
 202 browser tests pass; the 20 regression tests need private sample drawings and skip without them.
 
 ## Privacy
