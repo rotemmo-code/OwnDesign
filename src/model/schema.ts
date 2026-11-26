@@ -61,6 +61,8 @@ const wall = z
     thickness: z.number().min(LIMITS.thicknessMin).max(LIMITS.thicknessMax),
     finishA: finish,
     finishB: finish,
+    finishStart: finish.optional(),
+    finishEnd: finish.optional(),
     source: z.enum(['detected', 'manual']),
     review: z.boolean(),
     status,

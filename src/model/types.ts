@@ -22,6 +22,9 @@ export type Wall = {
   thickness: number;
   finishA: number | null;
   finishB: number | null;
+  /** Finish across the wall's end at a, and at b; only drawn where that end stands free in a room. Absent: none. */
+  finishStart?: number | null;
+  finishEnd?: number | null;
   source: 'detected' | 'manual';
   review: boolean;
   status?: Status;
@@ -170,7 +173,9 @@ export type PlannedAction =
   | { type: 'p.keepName'; room: Id; part: Id }
   /** Puts a wall or door back as it was in the existing state (owner 7R; handled in Task 19). */
   | { type: 'p.restore'; id: Id };
-export type FinishAction = { type: 'setFinish'; state: StateName; wallId: Id; side: Side; mm: number | null };
+/** A side of the wall, or one of its ends: 'start' at a, 'end' at b. */
+export type FinishPlace = Side | 'start' | 'end';
+export type FinishAction = { type: 'setFinish'; state: StateName; wallId: Id; side: FinishPlace; mm: number | null };
 export type LifecycleAction = { type: 'approve' } | { type: 'reopen' } | { type: 'startPlanned' };
 export type AnnotationAction =
   | { type: 'n.addCloud'; a: Pt; b: Pt; note: string; source: Cloud['source'] }

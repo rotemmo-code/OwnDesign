@@ -1,11 +1,12 @@
 import { existingHandlers } from './existing';
+import { finishHandlers } from './finish';
 import { type Change, type Handler, type Handlers, Refused } from './rules';
 import { ProjectSchema } from './schema';
 import type { Action, Project, Reason, Result } from './types';
 
 export { type Change, type Handler, Refused, refuse } from './rules';
 
-const HANDLERS: Handlers = { ...existingHandlers };
+const HANDLERS: Handlers = { ...existingHandlers, ...finishHandlers };
 
 /** The reason for the first thing the file schema refuses. */
 function reasonOf(issue: { code: string; origin?: string; expected?: string }): Reason {
