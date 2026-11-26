@@ -1,4 +1,4 @@
-import { area, closeGaps, contains, dist, intersection, parts, polygon, ringArea, rings, split, union } from './geo';
+import { area, closeGaps, contains, dist, interiorPoint, intersection, parts, polygon, ringArea, rings, split, union } from './geo';
 import { massPieces, TOUCH } from './join';
 import type { Pt, Room, RoomChange, State, Wall } from './types';
 
@@ -54,15 +54,17 @@ const meet = (a: Box, b: Box) => a.x0 <= b.x1 && b.x0 <= a.x1 && a.y0 <= b.y1 &&
 export function spaces(state: Pick<State, 'walls' | 'separators'>): Pt[][][] {
   const walls = live(state.walls);
   const joined = union(massPieces(walls).map(p => polygon(p)));
-  const mass = parts(closeGaps(joined, TOUCH)).map(p => rings(p));
+  const pieces = parts(closeGaps(joined, TOUCH));
+  const mass = pieces.map(p => rings(p));
   const held = (p: Pt) => mass.some(([shell, ...holes]) => contains(shell, p) && !holes.some(h => contains(h, p)));
   // better no change than a silent one
   if (!walls.every(w => held({ x: (w.a.x + w.b.x) / 2, y: (w.a.y + w.b.y) / 2 }))) throw new Error('a wall was lost from the wall mass');
-  const open = mass.flatMap((list, owner) => list.slice(1).map(r => ({ owner, size: Math.abs(ringArea(r)), region: [r] })));
-  // an island is a hole of the smallest space around it
-  mass.forEach(([shell], i) => {
-    const round = open.filter(o => o.owner !== i && contains(o.region[0], shell[0])).sort((p, q) => p.size - q.size);
-    round[0]?.region.push(shell);
+  const open = mass.flatMap(list => list.slice(1).map(r => ({ size: Math.abs(ringArea(r)), region: [r] })));
+  // an island is a hole of the smallest space around a point inside it: one on its outline may touch the space
+  pieces.forEach((piece, i) => {
+    const at = interiorPoint(piece);
+    const round = open.filter(o => contains(o.region[0], at)).sort((p, q) => p.size - q.size);
+    round[0]?.region.push(mass[i][0]);
   });
   const cut = open
     .map(o => o.region)
@@ -122,8 +124,11 @@ export function computeRooms(state: State, previous: Room[]): { rooms: Room[]; c
     };
   });
   const splits = previous.flatMap((room, p): RoomChange[] => {
-    const cut = pairs.filter(x => x.p === p && x.inNew && (own.get(x.n) ?? p) === p).map(x => rooms[x.n].id);
-    return cut.length > 1 ? [{ type: 'split', room: room.id, parts: cut }] : [];
+    const cut = pairs.filter(x => x.p === p && x.inNew && (own.get(x.n) ?? p) === p).map(x => x.n);
+    // the space that keeps the id is a part too, even when most of it lay outside; a room with any part has one
+    const keeper = heir.get(p)!;
+    const all = cut.includes(keeper) ? cut : [keeper, ...cut];
+    return cut.length > 1 ? [{ type: 'split', room: room.id, parts: all.map(n => rooms[n].id) }] : [];
   });
   const merges = rooms.flatMap((room, n): RoomChange[] => {
     const from = pairs.filter(x => x.n === n && x.inOld && (heir.get(x.p) ?? n) === n).map(x => previous[x.p].id);

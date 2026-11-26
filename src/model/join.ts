@@ -52,19 +52,25 @@ function seenFrom(m: Axis, p: Pt, out: Pt) {
 }
 /** The place lies in the body of m, or within TOUCH of it. */
 const holds = (m: Axis, s: number, off: number) => s >= -TOUCH && s <= m.l + TOUCH && Math.abs(off) <= m.t / 2 + TOUCH;
-/** How far an end at p runs on to out: to the centre line of a wall that it touches. */
-const reach = (walls: Axis[], p: Pt, out: Pt) =>
-  walls.reduce((best, m) => {
+/** How far an end at p, t thick, runs on to out: to the centre line of a wall that it, or a corner of it, touches. */
+function reach(walls: Axis[], p: Pt, out: Pt, t: number) {
+  const points = [p, step(p, normalA(out), t / 2), step(p, normalA(out), -t / 2)];
+  return walls.reduce((best, m) => {
     const { s, off, sine } = seenFrom(m, p, out);
     const e = -off / sine;
-    const touches = holds(m, s, off) && Math.abs(sine) >= LEAST_SINE;
+    const near = points.some(q => {
+      const seen = seenFrom(m, q, out);
+      return holds(m, seen.s, seen.off);
+    });
+    const touches = near && Math.abs(sine) >= LEAST_SINE;
     return touches && holds(m, s + e * dot(out, m.u), 0) ? Math.max(best, e) : best;
   }, 0);
-/** The two directions of a wall that goes on at both sides of p. */
+}
+/** The two directions of a wall whose centre line passes p, and goes on at both sides of it. */
 function through(m: Axis, p: Pt): Arm[] {
   const { s, off } = seenFrom(m, p, m.u);
   const at = step(m.w.a, m.u, s);
-  const passes = s > JOINT && s < m.l - JOINT && holds(m, s, off);
+  const passes = s > JOINT && s < m.l - JOINT && Math.abs(off) <= JOINT;
   return passes ? [m.u, minus(m.u)].map(u => ({ i: -1, end: 0, p: at, at, u, l: Infinity, t: m.t })) : [];
 }
 /** Of x and y, the next clockwise on screen: a face that stops more than 0.01 mm before the two faces meet is run on to there. */
@@ -82,7 +88,7 @@ function corner(x: Arm, y: Arm): Tip[][] {
   );
 }
 
-// shortcut: every end is compared with every wall, 5,000 walls take 4 s; index the walls by box when plans get that large.
+// shortcut: every end is compared with every wall, 5,000 walls take 6 s; index the walls by box when plans get that large.
 export function joinWalls(walls: Wall[]): Map<Id, Joined> {
   const all = walls.map((w): Axis => ({ w, u: axis(w), l: dist(w.a, w.b), t: w.thickness }));
   const arms = all.flatMap(({ w, u, l, t }, i) =>
@@ -90,14 +96,27 @@ export function joinWalls(walls: Wall[]): Map<Id, Joined> {
       const [q, out] = end ? [w.b, u] : [w.a, minus(u)];
       // into a thinner wall the body does not run on: a corner of it would come out of the far face
       const wide = all.filter(m => t * Math.abs(dot(out, m.u)) <= m.t + 0.01);
-      return { i, end, p: step(q, out, reach(wide, q, out)), at: step(q, out, reach(all, q, out)), u: minus(out), l, t };
+      return { i, end, p: step(q, out, reach(wide, q, out, t)), at: step(q, out, reach(all, q, out, t)), u: minus(out), l, t };
     }),
   );
+  // ends within JOINT of one another, also by way of others, are one joint
+  const lead = arms.map((_, i) => i);
+  const find = (i: number) => {
+    while (lead[i] !== i) i = lead[i] = lead[lead[i]];
+    return i;
+  };
+  const byX = arms.map((_, i) => i).filter(i => !Number.isNaN(arms[i].at.x)).sort((i, j) => arms[i].at.x - arms[j].at.x);
+  byX.forEach((i, k) => {
+    for (let n = k + 1; n < byX.length && arms[byX[n]].at.x - arms[i].at.x <= JOINT; n++)
+      if (dist(arms[i].at, arms[byX[n]].at) <= JOINT) lead[find(byX[n])] = find(i);
+  });
+  const joints = new Map<number, Arm[]>();
+  for (const [i, x] of arms.entries()) joints.set(find(i), [...(joints.get(find(i)) ?? []), x]);
   const tips = all.map((): Tip[] => []);
-  for (const first of arms) {
-    const ends = arms.filter(o => dist(o.at, first.at) <= JOINT);
-    if (ends[0] !== first) continue;
-    const joint = [...all.flatMap(m => through(m, first.at)), ...ends];
+  for (const ends of joints.values()) {
+    const mean = (k: 'x' | 'y') => ends.reduce((sum, o) => sum + o.at[k], 0) / ends.length;
+    const at = { x: mean('x'), y: mean('y') };
+    const joint = [...all.flatMap(m => through(m, at)), ...ends];
     // of walls lying on each other only the thickest counts, of equal ones in the very same direction the first
     const hides = (y: Arm, x: Arm, before: boolean) => {
       const cosine = dot(x.u, y.u);
@@ -128,11 +147,11 @@ export function joinWalls(walls: Wall[]): Map<Id, Joined> {
 export const massPieces = (walls: Wall[]): Pt[][] => [...joinWalls(walls).values()].flatMap(j => [j.body, ...j.tips]);
 /** What to draw for every wall: its outline with the joints filled, or its plain rectangle when it was removed. */
 export function wallOutlines(walls: Wall[]): Map<Id, Pt[]> {
-  const joined = joinWalls(walls.filter(w => w.status !== 'removed'));
+  const joined = joinWalls(walls.filter(w => w.status !== 'removed' && dist(w.a, w.b) > 0));
   return new Map(
     walls.map(w => {
       const j = joined.get(w.id);
-      if (!j) return [w.id, corners(w.a, w.b, w.thickness)];
+      if (!j) return [w.id, dist(w.a, w.b) > 0 ? corners(w.a, w.b, w.thickness) : []];
       return [w.id, j.tips.length ? rings(union([j.body, ...j.tips].map(r => polygon(r))))[0] : j.body];
     }),
   );

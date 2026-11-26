@@ -131,7 +131,7 @@ it('closeGaps closes a slit up to mm wide and changes nothing else', () => {
   expect(area(closeGaps(union([]), 2))).toBe(0);
 });
 
-it('closeGaps changes nothing when it would close a space of 0.25 m2 or take something away', () => {
+it('closeGaps changes nothing when a space of 0.25 m2 or more would be left with under 0.2 m2, and takes nothing away', () => {
   /** A block with a hole of w x h, and beside it a slot of the given size that opens into it. */
   const hollow = (w: number, h: number, slotW = 0, slotH = 0) => {
     const block = difference(polygon(rect(-500, -500, 3000, 1500)), polygon(rect(0, 0, w, h)));
@@ -144,7 +144,7 @@ it('closeGaps changes nothing when it would close a space of 0.25 m2 or take som
   // the hole may lose its slot, as long as 0.2 m2 of it are left
   expect(left(hollow(480, 480, 300, 90), 100)).toEqual([230_400]);
   expect(left(hollow(420, 420, 900, 90), 100)).toEqual([257_400]);
-  // 4 % of the area would go
+  // opening instead of closing would take 4 % away; nothing goes
   const spur = union([polygon(rect(0, 0, 1000, 1000)), polygon(rect(1000, 0, 4000, 15))]);
   expect(area(closeGaps(spur, -20))).toBe(1_045_000);
 });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { area, closeGaps, difference, intersection, polygon, ringArea, rings, union, wallBody } from '../../src/model/geo';
+import { area, closeGaps, difference, intersection, polygon, ringArea, rings, union, valid, wallBody } from '../../src/model/geo';
 import { joinWalls, massPieces, TOUCH, wallOutlines } from '../../src/model/join';
 import { faceLength, formatM2, roomMetrics } from '../../src/model/measure';
 import { cleanRing, computeRooms, live } from '../../src/model/rooms';
@@ -45,6 +45,11 @@ const loop = (points: Pt[], t: number, id: string): Wall[] =>
     return wall(id + i, a.x, a.y, b.x, b.y, t);
   });
 const partition = (...walls: Wall[]) => box(s => s.walls.splice(4, 1, ...walls));
+/** The plan turned by t and moved by o. */
+const placed = (walls: Wall[], t: number, o: Pt) => {
+  const move = (p: Pt) => P(o.x + p.x * Math.cos(t) - p.y * Math.sin(t), o.y + p.x * Math.sin(t) + p.y * Math.cos(t));
+  return walls.map(w => ({ ...w, a: move(w.a), b: move(w.b) }));
+};
 const column = (x: number, y: number) => wall('col', x, y, x + 300, y, 200);
 
 describe('rooms', () => {
@@ -101,12 +106,13 @@ describe('rooms', () => {
   });
 
   it('closing one gap does not open another joint', () => {
-    // two walls that meet the top one at a sharp angle, and a partition of two walls 1.9 mm apart
+    // two walls whose end corners touch, or nearly touch, the top one, and a partition of two walls 1.9 mm apart
     const walls = [...shell(10_000, 6350, 150), wall('p', 4525, 2.2, 4227, 6347.8, 100), wall('q', 3925, 4, 4333, 6346, 100)];
     const partition = [wall('u', 7425, 0, 7425, 2925, 100), wall('v', 7526.9, 1925, 7526.9, 6350, 100)];
-    const apart = areas(plan([...walls, ...partition]));
-    expect([areas(plan(walls)).length, apart.length]).toEqual([2, 3]);
-    near(apart[0] + apart[1] + apart[2] + 100 * (2925 + 4425) + 1.9 * 1000, areas(plan(walls)).reduce((sum, v) => sum + v), 1);
+    const [whole, apart] = [areas(plan(walls)), areas(plan([...walls, ...partition]))];
+    const sum = (list: number[]) => list.reduce((s, v) => s + v, 0);
+    expect([whole.length, apart.length]).toEqual([3, 4]);
+    near(sum(apart) + 100 * (2925 + 4425) + 1.9 * 1000, sum(whole), 1);
   });
 
   it('a partition of two pieces that nearly meet keeps both rooms wherever the plan lies', () => {
@@ -119,6 +125,38 @@ describe('rooms', () => {
         const s = partition(wall('p', 3250, 200, 3250, 1700, 100), wall('q', 3250 + step, 1700, 3250 + step + lean, 4200, 100));
         const walls = s.walls.map(w => ({ ...w, a: turn(w.a), b: turn(w.b) }));
         expect(computeRooms({ ...s, walls }, []).rooms, `${step} ${k}`).toHaveLength(2);
+      }
+  });
+
+  it('a diagonal partition closes when the corner of its end comes up to 2 mm near a face, at any angle and place', () => {
+    // its middle stays far from the top wall's face; only the nearer corner of its end comes this close
+    const diagonal = (degrees: number, gap: number) => {
+      const a = (degrees * Math.PI) / 180;
+      const [down, up] = [2000 / Math.sin(a), (2000 - 50 * Math.abs(Math.cos(a)) - gap) / Math.sin(a)];
+      return wall('part', 3250 - Math.cos(a) * down, 4200, 3250 + Math.cos(a) * up, 2200 - Math.sin(a) * up, 100);
+    };
+    for (const degrees of [45, 60, 75, 85, 120])
+      for (const [gap, count] of [[0, 2], [0.0001, 2], [0.5, 2], [2, 2], [2.1, 1]])
+        for (let k = 0; k < 4; k++) {
+          const s = box(s => (s.walls[4] = diagonal(degrees, gap)));
+          const walls = placed(s.walls, k * 1.1, P(5000 + k * 333, 7000 - k * 777));
+          expect(computeRooms({ ...s, walls, rooms: [] }, []).rooms, `${degrees} degrees, ${gap} mm, place ${k}`).toHaveLength(count);
+        }
+  });
+
+  it('a wall that cuts off a corner of a room makes a room of it, whether its corners touch the faces, stop short or reach in', () => {
+    // 6 x 4 m drawn centre line to centre line; a wall of 100 at 45 degrees from the top face to the right face, its end corners gap from them
+    const cut = (gap: number) => {
+      const k = 1000 - 50 * Math.SQRT1_2 - gap;
+      return [...loop([P(-50, -50), P(6050, -50), P(6050, 4050), P(-50, 4050)], 100, 'o'), wall('d', 5000 - k, 1000 - k, 5000 + k, 1000 + k, 100)];
+    };
+    // beside the wall's faces x - y = 4000 +- 50 sqrt 2
+    const [small, large] = [(2000 - 50 * Math.SQRT2) ** 2 / 2, 24e6 - (2000 + 50 * Math.SQRT2) ** 2 / 2];
+    for (const gap of [-0.3, 0, 0.3, 2])
+      for (let k = 0; k < 6; k++) {
+        const found = areas(plan(placed(cut(gap), k * 0.6283, P(3000 + k * 1777, 9000 - k * 913))));
+        expect(found, `${gap} mm, place ${k}`).toHaveLength(2);
+        [small, large].forEach((v, i) => near(found[i], v));
       }
   });
 
@@ -325,6 +363,45 @@ describe('joints', () => {
     expect([199, 200, 201].map(bodyEnd)).toEqual([0, 0, -50]);
   });
 
+  it('the order in which the walls are drawn changes nothing, also where several ends lie up to 3 mm apart', () => {
+    // the top-left corner of a 3 x 4 m room; in another order these ends were joined otherwise
+    const walls = [
+      wall('top', 2.894053383730352, -0.7882419261150062, 3000, 0, 100),
+      wall('right', 3000, 0, 3000, 4000, 100),
+      wall('bottom', 3000, 4000, 0, 4000, 100),
+      wall('left', 0, 4000, -2.8405932881869376, 0.5036297994665802, 100),
+      wall('diag', -0.9635212230496109, 2.964604604523629, -1500, -833.3854302065448, 100),
+      wall('up', 2.3419034429825842, -2.8154166704043746, 0.08339496329426765, -2000, 100),
+    ];
+    const look = (list: Wall[]) => run(plan(list)).rooms.map(r => metrics(r));
+    const first = look(walls);
+    const orders = [...walls.map((_, k) => [...walls.slice(k), ...walls.slice(0, k)]), [...walls].reverse(), [walls[4], walls[0], walls[5], walls[3], walls[1], walls[2]]];
+    for (const [k, order] of orders.entries()) {
+      const found = look(order);
+      expect(found.map(m => [m.edges.length, m.rect === null]), String(k)).toEqual(first.map(m => [m.edges.length, m.rect === null]));
+      found.forEach((m, i) => near(m.areaMm2, first[i].areaMm2));
+    }
+  });
+
+  it('ends that are one joint only by way of others get no corner far from them', () => {
+    // short walls in a zigzag, each starting 4 mm from where the one before ends: one joint, 10 m long
+    const walls: Wall[] = [];
+    for (let i = 0, p = P(0, 0); i < 40; i++) {
+      const a = ((i % 2 ? -1 : 1) * 30 * Math.PI) / 180;
+      const q = P(p.x + 250 * Math.cos(a), p.y + 250 * Math.sin(a));
+      walls.push(wall(`z${i}`, p.x, p.y, q.x, q.y, 100));
+      p = P(q.x + 4 * Math.cos(a + 1), q.y + 4 * Math.sin(a + 1));
+    }
+    for (const w of walls)
+      for (const tip of joinWalls(walls).get(w.id)!.tips) expect(Math.min(...[w.a, w.b].map(end => Math.max(...tip.map(p => Math.hypot(p.x - end.x, p.y - end.y))))), w.id).toBeLessThan(260);
+  });
+
+  it('a wall takes part in a joint when its centre line passes within 5 mm of it', () => {
+    // two walls of 100 end at one point inside a passing wall of 200, d below its centre line
+    const tips = (d: number) => [...joinWalls([wall('m', -3000, 0, 3000, 0, 200), wall('a', -2000, d - 2000, 0, d, 100), wall('b', 2000, d - 2000, 0, d, 100)]).values()].map(j => j.tips.length);
+    expect([0, 5, 5.1, 20].map(tips)).toEqual([[0, 0, 0], [0, 0, 0], [0, 1, 1], [0, 1, 1]]);
+  });
+
   it('ends 5 mm apart are one joint, 5.1 mm are two; a wall that passes beside it changes nothing', () => {
     // two walls nearly in line, the second from (off, 0)
     const tips = (off: number, ...more: Wall[]) => [...joinWalls([wall('a', 0, 0, -3000, 0, 100), wall('b', off, 0, off + 3000, 500, 100), ...more]).values()].slice(0, 2).map(j => j.tips.length);
@@ -422,6 +499,7 @@ describe('joints', () => {
   });
 
   it('the joined pieces of 2,000 random joints are valid and never smaller than the walls', () => {
+    // ends up to 3 mm from the joint
     let seed = 3;
     const random = () => (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648;
     const pick = <T>(list: T[]) => list[Math.floor(random() * list.length)];
@@ -430,10 +508,15 @@ describe('joints', () => {
       const walls = Array.from({ length: pick([2, 2, 3, 4]) }, (_, j) => {
         const angle = base + (j ? random() * 6.28 : 0);
         const length = pick([10, 30, 60, 300, 2000, 4000]);
-        const off = (random() - 0.5) * pick([0, 0, 1, 3]);
-        return wall(`w${j}`, 5000 + off, 5000 - off, 5000 + Math.cos(angle) * length, 5000 + Math.sin(angle) * length, pick([20, 80, 100, 150, 200, 250, 460]));
+        const [off, towards] = [random() * pick([0, 0, 1, 3]), random() * 6.28];
+        const end = P(5000 + off * Math.cos(towards), 5000 + off * Math.sin(towards));
+        return wall(`w${j}`, end.x, end.y, 5000 + Math.cos(angle) * length, 5000 + Math.sin(angle) * length, pick([20, 80, 100, 150, 200, 250, 460]));
       });
-      const joined = area(union(massPieces(walls).map(p => polygon(p))));
+      const pieces = massPieces(walls).map(p => polygon(p));
+      expect(pieces.every(valid), `joint ${i}`).toBe(true);
+      const all = union(pieces);
+      expect(valid(all), `joint ${i}`).toBe(true);
+      const joined = area(all);
       const plain = area(drawn(walls));
       expect(plain, `joint ${i}`).toBeGreaterThan(0);
       expect(joined, `joint ${i}`).toBeGreaterThanOrEqual(plain - 1);
@@ -447,6 +530,12 @@ describe('joints', () => {
     l[1].status = 'removed';
     expect(outline('h')).toEqual([P(0, -50), P(2000, -50), P(2000, 50), P(0, 50)]);
     expect(outline('v')).toEqual([P(2050, 0), P(2050, 2000), P(1950, 2000), P(1950, 0)]);
+    // a wall of no length has no outline and changes no joint; one of 0.5 mm keeps its rectangle
+    const outlines = wallOutlines([...l, wall('z', 2000, 0, 2000, 0, 100), wall('y', 0, 500, 0.5, 500, 100)]);
+    expect([outlines.get('z'), outlines.get('h'), outlines.get('y')]).toEqual([[], outline('h'), [P(0, 450), P(0.5, 450), P(0.5, 550), P(0, 550)]]);
+    const pair = [wall('p', 5550, 3425, 5000, 6850, 300), wall('q', 5000, 6850, 0, 6850, 300)];
+    const joined = joinWalls([pair[0], wall('z', 0, 0, 0, 0, 100), pair[1]]);
+    expect(pair.map(w => joined.get(w.id))).toEqual([...joinWalls(pair).values()]);
   });
 
   it('a room corner of 10 or 5 degrees stays exact', () => {
@@ -473,6 +562,16 @@ describe('holes', () => {
     expect(formatM2(metrics(b).areaMm2)).toBe('11.54');
     expect(metrics(b).rect).toEqual({ l: 4000, w: 2900 });
     expect(changes).toEqual([]);
+  });
+
+  it('a closed box that touches a wall at one corner is a hole of the room around it, at any place', () => {
+    const [cx, h] = [3300 + 707.1068 + 50 * Math.SQRT2, 707.1068];
+    const turned = loop([P(cx - h, 2200), P(cx, 2200 - h), P(cx + h, 2200), P(cx, 2200 + h)], 100, 'k');
+    for (let k = 0; k < 24; k++) {
+      const s = box();
+      const found = computeRooms({ ...s, walls: placed([...s.walls, ...turned], k * 0.2618, P(1000 + k * 2311, 5000 - k * 617)), rooms: [] }, []).rooms;
+      expect(found.map(r => [formatM2(metrics(r).areaMm2), r.holes.length]).sort(), String(k)).toEqual([['0.81', 0], ['10.39', 1], ['12.00', 0]]);
+    }
   });
 
   it('a column that touches a wall is not a hole', () => {
@@ -598,8 +697,12 @@ describe('identity and changes', () => {
   });
 
   it('merge: the larger room gives id, name and flags, and both old rooms are named', () => {
-    const { rooms, changes } = run(box(s => s.walls.pop()));
-    expect(rooms.map(r => [r.id, r.name, r.inApartment])).toEqual([['room-a', 'A', true]]);
+    const s = box(s => {
+      s.walls.pop();
+      Object.assign(s.rooms[1], { isMamad: true, outdoor: true, inApartment: false });
+    });
+    const { rooms, changes } = run(s);
+    expect(rooms.map(r => [r.id, r.name, r.inApartment, r.isMamad, r.outdoor])).toEqual([['room-a', 'A', true, false, false]]);
     expect(changes).toEqual([{ type: 'merge', room: 'room-a', from: ['room-a', 'room-b'] }]);
   });
 
@@ -653,6 +756,15 @@ describe('identity and changes', () => {
     const { ids: [left, middle, right], changes } = after(900);
     expect([left, right]).toEqual(['r0', 'r2']);
     expect(changes).toEqual([{ type: 'split', room: 'r2', parts: ['r2', middle] }, { type: 'merge', room: 'r0', from: ['r0', 'r1'] }]);
+  });
+
+  it('the room that keeps the id leads its split notice, also when it went into a merge', () => {
+    // three rooms of 1.5, 1.5 and 6 m before an old room p that is now spread over all three, and two others in the large one
+    const old = (id: string, boundary: Pt[]): Room => ({ ...box().rooms[0], id, name: id, boundary });
+    const before = [old('p', [P(0, 0), P(5500, 0), P(5500, 4000), P(3000, 4000), P(3000, 2400), P(0, 2400)]), old('q', rect(5500, 0, 7250, 4000)), old('r', rect(7250, 0, 9000, 4000))];
+    const { rooms, changes } = computeRooms(plan([...shell(9000, 4000), wall('u', 1500, 0, 1500, 4000, 100), wall('v', 3000, 0, 3000, 4000, 100)]), before);
+    const [left, middle] = [...rooms].sort((p, q) => p.boundary[0].x - q.boundary[0].x).map(r => r.id);
+    expect(changes).toEqual([{ type: 'split', room: 'p', parts: ['p', left, middle] }, { type: 'merge', room: 'p', from: ['p', 'q', 'r'] }]);
   });
 
   it('only the rooms that merge are reported, not the third one', () => {

@@ -11,6 +11,7 @@ import BufferBuilder from 'jsts/org/locationtech/jts/operation/buffer/BufferBuil
 import BufferParameters from 'jsts/org/locationtech/jts/operation/buffer/BufferParameters.js';
 import DistanceOp from 'jsts/org/locationtech/jts/operation/distance/DistanceOp.js';
 import Polygonizer from 'jsts/org/locationtech/jts/operation/polygonize/Polygonizer.js';
+import IsValidOp from 'jsts/org/locationtech/jts/operation/valid/IsValidOp.js';
 import TopologyPreservingSimplifier from 'jsts/org/locationtech/jts/simplify/TopologyPreservingSimplifier.js';
 import type { Pt, Wall } from './types';
 
@@ -151,6 +152,10 @@ export const union = (list: Geom[]): Geom => overlay(list, [], inside => inside)
 export const difference = (a: Geom, b: Geom): Geom => overlay([a], [b], (inA, inB) => inA && !inB);
 export const intersection = (a: Geom, b: Geom): Geom => overlay([a], [b], (inA, inB) => inA && inB);
 export const area = (g: Geom): number => g.getArea();
+/** A point inside g, not on its outline. */
+export const interiorPoint = (g: Geom): Pt => InteriorPointArea.getInteriorPoint(g);
+/** Rings that close and do not cross: what jsts can work with. */
+export const valid = (g: Geom): boolean => IsValidOp.isValid(g);
 export const distance = (a: Geom, b: Geom): number => DistanceOp.distance(a, b);
 
 function grow(g: Geom, mm: number, mitreLimit: number): Geom {
@@ -166,7 +171,7 @@ function grow(g: Geom, mm: number, mitreLimit: number): Geom {
 export const buffer = (g: Geom, mm: number): Geom => grow(g, mm, 5);
 /**
  * Closes gaps up to mm wide and takes nothing away. Mitre limit 50 keeps a room corner sharp down to 2.3 degrees. When
- * that would close a space of 0.25 m2, nothing is closed.
+ * fewer spaces of 0.2 m2 would be left than there were of 0.25 m2, nothing is closed.
  */
 export function closeGaps(g: Geom, mm: number): Geom {
   // with g, because a sharp mitre can cut through a wall
