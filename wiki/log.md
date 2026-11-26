@@ -152,3 +152,13 @@ a balcony; `roomAfterFinish` gives the net room, `roomMetrics` the gross one. Th
 two optional fields; earlier files still open. Review found that splitting a wall copied an end
 finish to the cut, and that small joint edges were left bare (up to 0.007 m2 at 20 cm); both fixed.
 Known limits are listed in the plan. Tests: 528 unit, 43 edge, 202 browser. Pages: [pdf-importer](pdf-importer.md).
+
+## [2026-11-26] build | PDF importer: windows, entry door and outer walls locked by default
+User rule: windows, the entry door, the mamad's door and window, and the outer walls are a given.
+They are locked from the moment they exist; the only way to correct a detection error is a
+deliberate release of that item, then confirm, which locks it again. Inner doors and inner walls stay
+free. Approving the existing state needs everything confirmed and nothing released. The project file
+gained two optional fields; earlier files open with these items locked. Review found a lining on an
+outer wall's inside face was wrongly refused and that the locks cost 0.2 to 0.3 s per edit on a
+1,000-wall plan; both fixed (now about 0.03 to 0.13 s). Tests: 557 unit, 43 edge, 202 browser.
+Pages: [pdf-importer](pdf-importer.md).

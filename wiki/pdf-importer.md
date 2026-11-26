@@ -46,7 +46,7 @@ defects, for example a diagonal wall touching another only by a corner that left
 ## Tests
 
 `cd pdf-importer && npm ci && npm run verify`: typecheck, unit, edge, regression and browser tests
-(Chromium and Firefox), then `npm audit`. After finish layers were merged: 528 unit, 43 edge and
+(Chromium and Firefox), then `npm audit`. After the default locks were merged: 557 unit, 43 edge and
 202 browser tests pass; the 20 regression tests need private sample drawings and skip without them.
 
 ## Privacy
