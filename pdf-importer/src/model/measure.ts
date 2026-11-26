@@ -11,8 +11,8 @@ export type Metrics = { areaMm2: number; rect: { l: number; w: number } | null; 
 const STEP = 2.01;
 const LEAST_STEP = 0.09;
 const SAME_LENGTH = 10.01;
-const FACE = 0.51;
-const LEAST_FACE = 9.99;
+export const FACE = 0.51;
+export const LEAST_FACE = 9.99;
 const SQUARE = Math.sin((0.51 * Math.PI) / 180);
 
 const edgesOf = (ring: Pt[]): Edge[] =>
@@ -64,8 +64,8 @@ export function roomMetrics(room: Pick<Room, 'boundary' | 'holes'>, separators: 
   };
 }
 
-/** mm along a -> b of the wall. */
-export type Face = { room: Id; from: number; to: number };
+/** mm along a -> b of the wall. ring: 0 the outline, k its hole k - 1; edge: from point edge to the next. */
+export type Face = { room: Id; ring: number; edge: number; from: number; to: number };
 const near = (p: Wall, q: Wall) =>
   (['x', 'y'] as const).every(
     k => Math.min(p.a[k], p.b[k]) <= Math.max(q.a[k], q.b[k]) + 2000 && Math.min(q.a[k], q.b[k]) <= Math.max(p.a[k], p.b[k]) + 2000,
@@ -83,15 +83,16 @@ export function faces(state: State, wallId: Id, side: Side): Face[] {
   const out: Face[] = [];
   let span: [number, number] | undefined;
   for (const room of state.rooms)
-    for (const ring of [room.boundary, ...room.holes])
+    [room.boundary, ...room.holes].forEach((ring, k) =>
       ring.forEach((p, i) => {
         const q = ring[(i + 1) % ring.length];
         if (Math.abs(off(p)) > FACE || Math.abs(off(q)) > FACE) return;
         span ??= joinWalls(walls.filter(o => near(o, w))).get(w.id)![side];
         const from = Math.max(Math.min(at(p), at(q)), span[0]);
         const to = Math.min(Math.max(at(p), at(q)), span[1]);
-        if (to - from >= LEAST_FACE) out.push({ room: room.id, from, to });
-      });
+        if (to - from >= LEAST_FACE) out.push({ room: room.id, ring: k, edge: i, from, to });
+      }),
+    );
   return out;
 }
 export const roomsOnSide = (state: State, wallId: Id, side: Side): Id[] => [...new Set(faces(state, wallId, side).map(f => f.room))];

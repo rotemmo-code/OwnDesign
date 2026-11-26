@@ -45,7 +45,7 @@ describe('faces', () => {
     expect(roomsOnSide(s, 'top', 'A')).toEqual([]);
     expect(roomsOnSide(s, 'top', 'B').sort()).toEqual(['room-a', 'room-b']);
     const spans = faces(s, 'top', 'B').sort((p, q) => p.from - q.from);
-    expect(spans).toEqual([{ room: 'room-a', from: 200, to: 3200 }, { room: 'room-b', from: 3300, to: 6200 }]);
+    expect(spans).toMatchObject([{ room: 'room-a', from: 200, to: 3200 }, { room: 'room-b', from: 3300, to: 6200 }]);
   });
 
   it('a free-standing column has its room on both sides', () => {
