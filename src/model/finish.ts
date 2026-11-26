@@ -24,19 +24,26 @@ const boxOf = (ring: Pt[], grow = 0) => ({
 type Box = ReturnType<typeof boxOf>;
 const meet = (a: Box, b: Box) => a.x0 <= b.x1 && b.x0 <= a.x1 && a.y0 <= b.y1 && b.y0 <= a.y1;
 
-/** Edges [ring, edge] of the region that lie across the wall's end: at a for 'start', at b for 'end'. */
-function endEdges(w: Wall, region: Pt[][], end: 'start' | 'end'): [number, number][] {
+/**
+ * The pieces [ring, edge, from, to] of the region's edges that lie across the wall's end (at a for 'start', at b for
+ * 'end'), from and to along the edge from 0 to 1. Like faces(): an edge that runs on past the end face, into a
+ * separator say, counts with the piece that covers the end face, when that is LEAST_FACE or longer.
+ */
+function endEdges(w: Wall, region: Pt[][], end: 'start' | 'end'): [number, number, number, number][] {
   const u = axis(w);
   const n = normalA(u);
   const s = end === 'start' ? 0 : dist(w.a, w.b);
-  const across = (p: Pt) => {
-    const [x, y] = [p.x - w.a.x, p.y - w.a.y];
-    return Math.abs(x * u.x + y * u.y - s) <= FACE && Math.abs(x * n.x + y * n.y) <= w.thickness / 2 + FACE;
-  };
+  const along = (p: Pt) => (p.x - w.a.x) * u.x + (p.y - w.a.y) * u.y;
+  const beside = (p: Pt) => (p.x - w.a.x) * n.x + (p.y - w.a.y) * n.y;
+  const h = w.thickness / 2;
   return region.flatMap((ring, k) =>
-    ring.flatMap((p, i): [number, number][] => {
+    ring.flatMap((p, i): [number, number, number, number][] => {
       const q = ring[(i + 1) % ring.length];
-      return dist(p, q) >= LEAST_FACE && across(p) && across(q) ? [[k, i]] : [];
+      if (Math.abs(along(p) - s) > FACE || Math.abs(along(q) - s) > FACE) return [];
+      const [op, oq] = [beside(p), beside(q)];
+      const t = (o: number) => (o - op) / (oq - op);
+      const [from, to] = [Math.max(Math.min(op, oq), -h), Math.min(Math.max(op, oq), h)];
+      return to - from >= LEAST_FACE ? [[k, i, ...([t(from), t(to)].sort((x, y) => x - y) as [number, number])]] : [];
     }),
   );
 }
@@ -79,10 +86,10 @@ function pieces(state: State, room: Room): Sub[][] {
     }
     for (const end of ['start', 'end'] as const) {
       const d = finishAt(w, end);
-      if (d !== null) for (const [k, i] of endEdges(w, region, end)) marks[k][i].push({ from: 0, to: 1, d, wall: w.id });
+      if (d !== null) for (const [k, i, from, to] of endEdges(w, region, end)) marks[k][i].push({ from, to, d, wall: w.id });
     }
   }
-  return region.map((ring, k) =>
+  return region.map((ring, k) => bridged(
     ring.flatMap((p, i) => {
       const q = ring[(i + 1) % ring.length];
       const list = marks[k][i];
@@ -96,7 +103,28 @@ function pieces(state: State, room: Room): Sub[][] {
         return [{ a: lerp(t0), b: lerp(t1), d: best?.d ?? 0, wall: best?.wall }];
       });
     }),
-  );
+  ));
+}
+
+/**
+ * A run of unfinished pieces, each shorter than LEAST_FACE, between two finished ones (the joint of two walls of
+ * different thickness, a small step) takes the thinner of the two finishes: the plaster runs over it.
+ */
+function bridged(list: Sub[]): Sub[] {
+  const short = (s: Sub) => !s.d && dist(s.a, s.b) < LEAST_FACE;
+  const n = list.length;
+  if (list.every(short) || !list.some(s => s.d)) return list;
+  const out = [...list];
+  for (let i = 0; i < n; i++) {
+    if (!short(list[i]) || short(list[(i + n - 1) % n])) continue; // i starts a run
+    let j = i;
+    while (short(list[(j + 1) % n])) j++;
+    const [before, after] = [list[(i + n - 1) % n], list[(j + 1) % n]];
+    if (!before.d || !after.d) continue;
+    const lead = before.d <= after.d ? before : after;
+    for (let k = i; k <= j; k++) out[k % n] = { ...list[k % n], d: lead.d, wall: lead.wall };
+  }
+  return out;
 }
 
 /** Where the line p + u s meets q + v s. */
@@ -192,8 +220,14 @@ export const finishHandlers: Handlers = {
     if (mm !== null) {
       const rooms = roomsAt(s, w.id, a.side);
       if (!rooms.length) refuse('finish-outer-side');
-      // no room left: nothing WIDTH wide
-      if (!rooms.every(r => leftOf(next, r)?.some(g => area(buffer(g, -WIDTH / 2)) > 0) ?? true)) refuse('finish-no-room-left');
+      // no room left: nothing WIDTH wide; an outline jsts cannot work with is invalid-geometry, not invalid-action
+      let fits: boolean;
+      try {
+        fits = rooms.every(r => leftOf(next, r)?.some(g => area(buffer(g, -WIDTH / 2)) > 0) ?? true);
+      } catch {
+        return refuse('invalid-geometry');
+      }
+      if (!fits) refuse('finish-no-room-left');
     }
     const project = a.state === 'existing' ? { ...p, existing: next } : { ...p, planned: next };
     return mm !== null && p.plaster === 'inWall' ? { project, notice: 'plaster-in-wall' } : { project };

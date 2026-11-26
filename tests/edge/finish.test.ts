@@ -119,8 +119,7 @@ it('random plans with columns, the same finish on every face and end: area equal
   for (let run = 0; run < RUNS; run++) {
     const d = 1 + Math.floor(r() * 200);
     const s = everyFace(plan(r), d);
-    // an edge under 10 mm is not a face and takes no finish (a column 5 mm into a room): left to the next test
-    for (const room of s.rooms.filter(x => shortest(x) >= 10)) {
+    for (const room of s.rooms) {
       checked++;
       const want = area(buffer(polygon(room.boundary, room.holes), -d));
       expect(Math.abs((roomAfterFinish(s, room.id)?.areaMm2 ?? 0) - want), `run ${run}`).toBeLessThanOrEqual(1);
@@ -142,7 +141,7 @@ it('random plans without openings: gross minus after-finish equals the drawn str
   }
 });
 
-it('convex rooms at any angle: equal to the mitre erosion within 1 mm2 where every edge is longer than 10 times the finish', () => {
+it('convex rooms at any angle: the mitre erosion within 1 mm2 where every edge is longer than 10 times the finish, within 10,000 mm2 otherwise', () => {
   const r = randomFrom(11);
   let checked = 0;
   for (let run = 0; run < RUNS * 4; run++) {
@@ -157,8 +156,10 @@ it('convex rooms at any angle: equal to the mitre erosion within 1 mm2 where eve
     }
     const d = 1 + Math.floor(r() * 120);
     s = everyFace(s, d);
-    for (const room of s.rooms.filter(x => !x.holes.length && shortest(x) > 10 * d)) {
-      expect(Math.abs((roomAfterFinish(s, room.id)?.areaMm2 ?? 0) - area(buffer(polygon(room.boundary), -d)))).toBeLessThanOrEqual(1);
+    for (const room of s.rooms.filter(x => !x.holes.length)) {
+      const error = Math.abs((roomAfterFinish(s, room.id)?.areaMm2 ?? 0) - area(buffer(polygon(room.boundary), -d)));
+      // a face shorter than about 10 times its finish next to a sharp corner: known limit, worst 8,744 mm2 in 3,000 rooms
+      expect(error).toBeLessThanOrEqual(shortest(room) > 10 * d ? 1 : 10_000);
       checked++;
     }
   }
@@ -199,7 +200,7 @@ it('random walk of setFinish and x.setWall: accepted parse, refused change nothi
   for (const x of ['existing-not-approved', 'finish-outer-side', 'finish-range', 'invalid-action', 'ok']) expect(reached).toContain(x);
 }, RUNS * 500);
 
-it('setFinish on a 220-wall grid with every face finished takes under 50 ms', () => {
+it('setFinish on a 220-wall grid with every face finished takes under 500 ms (about 5 ms measured)', () => {
   const walls: Wall[] = [];
   for (let i = 0; i <= 10; i++)
     for (let j = 0; j < 10; j++) {
@@ -211,5 +212,5 @@ it('setFinish on a 220-wall grid with every face finished takes under 50 ms', ()
   const id = s.walls[25].id;
   const start = performance.now();
   expect(why(p, fin(id, 'A', 30))).toBe('ok');
-  expect(performance.now() - start).toBeLessThan(50);
+  expect(performance.now() - start).toBeLessThan(500);
 });

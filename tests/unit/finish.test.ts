@@ -1,7 +1,7 @@
 import { expect, it } from 'vitest';
 import { apply } from '../../src/model/apply';
 import { canFinish, finishStrips, roomAfterFinish } from '../../src/model/finish';
-import { area } from '../../src/model/geo';
+import { area, buffer, polygon } from '../../src/model/geo';
 import { roomMetrics } from '../../src/model/measure';
 import { computeRooms } from '../../src/model/rooms';
 import { ProjectSchema } from '../../src/model/schema';
@@ -141,6 +141,8 @@ it('balcony: a side facing only a balcony is refused; a face partly along it is 
 it('allowed on fixed, unknown and mamad walls; the mamad room is unchanged', () => {
   let p = ok(boxProject(), { type: 'setMamad', room: 'room-a' }).project;
   p = ok(p, { type: 'classify', wallId: 'part', cls: 'fixed' }).project;
+  p = ok(p, { type: 'classify', wallId: 'top', cls: 'unknown' }).project;
+  expect(p.wallClass).toEqual({ part: 'fixed', top: 'unknown' });
   const q = finished(p, ['part', 'B', 20], ['top', 'B', 20], ['left', 'B', 20]);
   expect(q.existing.rooms).toBe(p.existing.rooms);
   expect(why(q, fin('left', 'A', 20))).toBe('finish-outer-side');
@@ -270,4 +272,52 @@ it('end finishes in the file: absent parses as before, null and 1 to 200 whole m
   const s = finished(boxWith(wall('col', 4500, 2200, 4800, 2200, 200)), ['col', 'start', 20], ['col', 'end', 35]);
   const back = ProjectSchema.parse(JSON.parse(JSON.stringify(s)));
   expect(back.existing.walls.find(w => w.id === 'col')).toMatchObject({ finishStart: 20, finishEnd: 35 });
+});
+
+it('splitting a wall does not copy its end finishes to the new ends: a stub split and its far part deleted has no finish left', () => {
+  const p = finished(boxWith(wall('stub', 3300, 2200, 4300, 2200, 100)), ['stub', 'end', 20]);
+  const split = ok(p, { type: 'x.splitWall', id: 'stub', at: 500 }).project;
+  const [first, second] = split.existing.walls.filter(w => w.id === 'stub' || !p.existing.walls.some(x => x.id === w.id));
+  expect([first.finishEnd ?? null, second.finishStart ?? null, second.finishEnd]).toEqual([null, null, 20]);
+  const left = ok(split, { type: 'x.deleteWall', id: second.id }).project.existing;
+  expect(roomAfterFinish(left, 'room-b')).toBeNull();
+});
+
+it('a free end whose face runs on into a separator keeps its finish', () => {
+  const s0 = boxApartment();
+  const s = { ...s0, walls: [...s0.walls, wall('stub', 4500, 0, 4500, 2000, 100)] };
+  const p = finished({ ...boxProject(), existing: { ...s, rooms: computeRooms(s, s.rooms).rooms } }, ['stub', 'A', 100], ['stub', 'B', 100], ['stub', 'end', 100]);
+  const q = ok(p, { type: 'x.addSeparator', a: { x: 4500, y: 2000 }, b: { x: 6200, y: 2000 } }).project;
+  expect(canFinish(q.existing, 'stub', 'end')).toBe(true);
+  const taken = (x: Project) => x.existing.rooms.reduce((sum, r) => sum + gross(x.existing, r.id) - (roomAfterFinish(x.existing, r.id)?.areaMm2 ?? gross(x.existing, r.id)), 0);
+  // all but the 100 x 100 corner piece beyond the tip, which the separator now cuts off from the side's strip (known limit)
+  near(taken(p), 390_000, 1);
+  near(taken(q), 390_000 - 100 * 100, 1);
+  expect(why(ok(q, fin('stub', 'end', null)).project, fin('stub', 'end', 100))).toBe('ok');
+});
+
+it.each([
+  [135, 100, 150, 200],
+  [150, 80, 100, 200],
+  [135, 100, 150, 20],
+])('an L at %s degrees of walls %s and %s thick, finished %s all round, takes what the mitre buffer of the island takes', (deg, t1, t2, d) => {
+  const turn = (deg * Math.PI) / 180;
+  const corner = { x: 4500, y: 2000 };
+  const far = { x: corner.x + 1000 * Math.cos(Math.PI - turn), y: corner.y - 1000 * Math.sin(Math.PI - turn) };
+  const legs = [{ ...wall('l1', 3800, 2000, corner.x, corner.y, t1) }, { ...wall('l2', 0, 0, 1, 1, t2), a: corner, b: far }];
+  const p = boxWith(...legs);
+  const room = p.existing.rooms.find(r => r.id === 'room-b')!;
+  expect(room.holes).toHaveLength(1);
+  const q = finished(p, ['l1', 'A', d], ['l1', 'B', d], ['l1', 'start', d], ['l2', 'A', d], ['l2', 'B', d], ['l2', 'end', d]);
+  const island = polygon(room.holes[0]);
+  const [got, want] = [gross(q.existing, 'room-b') - net(q.existing, 'room-b'), area(buffer(island, d)) - area(island)];
+  near(got, want, 1);
+});
+
+it('D3: a finish set before its room is marked as a balcony stays in the file, is neither drawn nor counted', () => {
+  const p = ok(ok(boxProject(), fin('part', 'A', 20)).project, { type: 'x.setRoom', id: 'room-b', outdoor: true }).project;
+  expect(p.existing.walls.find(w => w.id === 'part')!.finishA).toBe(20);
+  expect(roomAfterFinish(p.existing, 'room-b')).toBeNull();
+  expect(finishStrips(p.existing).has('part')).toBe(false);
+  expect(canFinish(p.existing, 'part', 'A')).toBe(false);
 });

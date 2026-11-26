@@ -133,12 +133,13 @@ export const existingHandlers: Handlers = {
     const l = length(w);
     if (at < LIMITS.wallLength - TOL || l - at < LIMITS.wallLength - TOL) refuse('invalid-geometry');
     const m = { x: w.a.x + ((w.b.x - w.a.x) * at) / l, y: w.a.y + ((w.b.y - w.a.y) * at) / l };
-    const second: Wall = { ...w, id: crypto.randomUUID(), a: m };
+    // the new ends at m are joined: the end finishes stay where they were set
+    const second: Wall = { ...w, id: crypto.randomUUID(), a: m, finishStart: null };
     const openings = s.openings.map(o => {
       if (o.wallId !== w.id || o.offset + o.width <= at + TOL) return o;
       return o.offset < at - TOL ? refuse('invalid-geometry') : { ...o, wallId: second.id, offset: Math.max(0, o.offset - at) };
     });
-    const walls = s.walls.flatMap(x => (x === w ? [{ ...w, b: m }, second] : [x]));
+    const walls = s.walls.flatMap(x => (x === w ? [{ ...w, b: m, finishEnd: null }, second] : [x]));
     const wallClass = Object.hasOwn(p.wallClass, w.id) ? { ...p.wallClass, [second.id]: p.wallClass[w.id] } : p.wallClass;
     return rebuildExisting({ ...p, wallClass }, { ...s, walls, openings }, []);
   },
