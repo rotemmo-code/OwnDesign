@@ -112,3 +112,10 @@ Tests at import: 374 unit, 26 edge, 16 browser tests pass; regression needs priv
 The user decided the importer's screens stay in Hebrew, right to left, as an exception to the
 English-only UI, for `pdf-importer/` only. Open item removed. Pages: [pdf-importer](pdf-importer.md),
 [open-items](open-items.md).
+
+## [2026-11-26] build | PDF importer: first screen (upload, page choice, zoom and pan)
+Upload by drop or button, page buttons, the page redrawn sharp after each zoom, pan with the middle
+button or space. An independent review found a redraw queue that could end the reader on a very heavy
+page, readers and bitmaps not released, and a Firefox wheel step 33 times too small; all fixed and
+re-reviewed. Tests: 387 unit, 26 edge, 126 browser. Not checked: Safari, Edge, a real screen reader, a
+change of pixel density between monitors. Pages: [pdf-importer](pdf-importer.md).

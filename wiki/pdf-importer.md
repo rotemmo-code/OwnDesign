@@ -26,12 +26,13 @@ measurements. Source: [`../pdf-importer/`](../pdf-importer/README.md).
 | Part | Files |
 |---|---|
 | PDF read in a worker, vector paths with clips, colours and layers | `pdf-importer/src/pdf/` |
+| First screen: upload, page choice, the page drawn sharp again after every zoom, pan | `pdf-importer/src/editor/`, `pdf-importer/src/pdf/render.ts` |
 | Scale calibration from the drawing's written dimensions | `pdf-importer/src/calibrate/fit.ts` |
 | Project data model and project-file schema (zod) | `pdf-importer/src/model/types.ts`, `schema.ts` |
 | Wall joints, room finding, gap closing up to 2 mm, room split, measurements, wall kind | `pdf-importer/src/model/geo.ts`, `join.ts`, `rooms.ts`, `measure.ts`, `kind.ts` |
 
-Not built yet: upload and editor screens, saving and autosave, wall detection, the planned state,
-PDF output. Image-only (scanned) PDFs are out of scope.
+Not built yet: calibration and editor screens, saving and autosave, wall detection, the planned
+state, PDF output. Image-only (scanned) PDFs are out of scope.
 
 ## How it is developed
 
@@ -42,8 +43,8 @@ defects, for example a diagonal wall touching another only by a corner that left
 ## Tests
 
 `cd pdf-importer && npm ci && npm run verify`: typecheck, unit, edge, regression and browser tests
-(Chromium and Firefox), then `npm audit`. At import (`e8f2a72`): 374 unit, 26 edge and 16 browser
-tests pass; the 20 regression tests need private sample drawings and skip without them.
+(Chromium and Firefox), then `npm audit`. After the first screen was merged: 387 unit, 26 edge and
+126 browser tests pass; the 20 regression tests need private sample drawings and skip without them.
 
 ## Privacy
 
