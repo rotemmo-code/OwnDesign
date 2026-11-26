@@ -167,7 +167,9 @@ export type PlannedAction =
   | { type: 'p.addSeparator'; a: Pt; b: Pt }
   | { type: 'p.deleteSeparator'; id: Id }
   | { type: 'p.setRoom'; id: Id; name: string }
-  | { type: 'p.keepName'; room: Id; part: Id };
+  | { type: 'p.keepName'; room: Id; part: Id }
+  /** Puts a wall or door back as it was in the existing state (owner 7R; handled in Task 19). */
+  | { type: 'p.restore'; id: Id };
 export type FinishAction = { type: 'setFinish'; state: StateName; wallId: Id; side: Side; mm: number | null };
 export type LifecycleAction = { type: 'approve' } | { type: 'reopen' } | { type: 'startPlanned' };
 export type AnnotationAction =
