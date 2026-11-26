@@ -1,6 +1,6 @@
 import { area, contains, corners, dist, intersection, polygon, rings, wallBody } from './geo';
-import { LEAST_SINE, TOUCH } from './join';
-import { isExterior } from './kind';
+import { LEAST_SINE, normalA, TOUCH } from './join';
+import { isExterior, isInside } from './kind';
 import { faces, roomsOnSide } from './measure';
 import { live } from './rooms';
 import { LIMITS } from './schema';
@@ -97,77 +97,156 @@ const along = (w: Wall, p: Pt) => {
   const [x, y] = [p.x - w.a.x, p.y - w.a.y];
   return { at: (x * (w.b.x - w.a.x) + y * (w.b.y - w.a.y)) / l, off: Math.abs(x * (w.b.y - w.a.y) - y * (w.b.x - w.a.x)) / l };
 };
-const onLine = (w: Wall, q: Wall) => q.thickness === w.thickness && along(w, q.a).off <= TOL && along(w, q.b).off <= TOL;
+/** q lies on w's line with w's thickness. */
+export const onLine = (w: Wall, q: Wall) => q.thickness === w.thickness && along(w, q.a).off <= TOL && along(w, q.b).off <= TOL;
 
 /**
  * The span of the wall, in mm from a, where a face of it is an edge of the mamad (from the first to the last piece that
  * measure.faces finds); before and after: the thickness of the thickest other wall that reaches the wall's centre line
  * there (within half its thickness + 2.01 mm), which is the corner joint of the mamad. null: the wall does not bound it.
  */
-export function mamadSpan(s: State, wallId: Id): { from: number; to: number; before: number; after: number } | null {
+/** A locked stretch of a wall, mm from a; before and after: how far the corner joint at each end reaches. */
+export type Span = { from: number; to: number; before: number; after: number };
+const pointOn = (w: Wall, t: number): Pt => ({ x: w.a.x + ((w.b.x - w.a.x) * t) / length(w), y: w.a.y + ((w.b.y - w.a.y) * t) / length(w) });
+/** The thickness of the thickest other wall that reaches w's centre line at t (within half its thickness + 2.01 mm). */
+const reach = (s: State, w: Wall, t: number) => {
+  const c = pointOn(w, t);
+  return Math.max(0, ...live(s.walls).filter(o => o.id !== w.id && toBody(o, c) <= w.thickness / 2 + TOUCH).map(o => o.thickness));
+};
+const spanOf = (s: State, w: Wall, from: number, to: number): Span => ({ from, to, before: reach(s, w, from), after: reach(s, w, to) });
+
+export function mamadSpan(s: State, wallId: Id): Span | null {
   const m = mamadOf(s);
   const w = s.walls.find(x => x.id === wallId);
   if (!m || !w) return null;
   const pieces = (['A', 'B'] as const).flatMap(side => faces(s, wallId, side)).filter(f => f.room === m.id);
   if (!pieces.length) return null;
-  const [from, to] = [Math.min(...pieces.map(f => f.from)), Math.max(...pieces.map(f => f.to))];
-  const reach = (t: number) => {
-    const c = { x: w.a.x + ((w.b.x - w.a.x) * t) / length(w), y: w.a.y + ((w.b.y - w.a.y) * t) / length(w) };
-    return Math.max(0, ...live(s.walls).filter(o => o.id !== w.id && toBody(o, c) <= w.thickness / 2 + TOUCH).map(o => o.thickness));
+  return spanOf(s, w, Math.min(...pieces.map(f => f.from)), Math.max(...pieces.map(f => f.to)));
+}
+const mamadSpans = (s: State, wallId: Id): Span[] => {
+  const k = mamadSpan(s, wallId);
+  return k ? [k] : [];
+};
+
+type Interval = [number, number];
+function merge(list: Interval[]): Interval[] {
+  const out: Interval[] = [];
+  for (const [f, t] of [...list].sort((x, y) => x[0] - y[0]))
+    if (out.length && f <= out[out.length - 1][1] + TOL) out[out.length - 1][1] = Math.max(out[out.length - 1][1], t);
+    else out.push([f, t]);
+  return out;
+}
+const minus = (a: Interval[], b: Interval[]): Interval[] =>
+  a.flatMap(([f, t]) => {
+    const left: Interval[] = [];
+    let from = f;
+    for (const [x0, x1] of b) {
+      if (x1 <= from || x0 >= t) continue;
+      if (x0 > from) left.push([from, x0]);
+      from = Math.max(from, x1);
+    }
+    return from < t ? [...left, [from, t] as Interval] : left;
+  });
+/**
+ * The outer stretches of a wall (8c): where an indoor room of the apartment lies on one face and none on the other face
+ * at the same place, and where a balcony lies on either face; 9.99 mm or longer, in order, each with its corner joints.
+ */
+export function envelopeSpans(s: State, wallId: Id): Span[] {
+  const w = live(s.walls).find(x => x.id === wallId);
+  if (!w) return [];
+  const rooms = new Map(s.rooms.map(r => [r.id, r]));
+  const sides = (['A', 'B'] as const).map(side => faces(s, wallId, side));
+  const cover = (k: 0 | 1, test: (r: Room) => boolean) => merge(sides[k].filter(f => test(rooms.get(f.room)!)).map((f): Interval => [f.from, f.to]));
+  // where another wall of the apartment (one with an indoor room beside it) lies against a face, that face is walled,
+  // not open to the outside: a T-joint, an L of two walls. A neighbour's wall laid back to back does not count.
+  const u = { x: (w.b.x - w.a.x) / length(w), y: (w.b.y - w.a.y) / length(w) };
+  const n = normalA(u);
+  const walled = (k: 0 | 1): Interval[] => {
+    const by = (k ? -1 : 1) * (w.thickness / 2 + 0.5);
+    const c = (t: number) => ({ x: w.a.x + u.x * t + n.x * by, y: w.a.y + u.y * t + n.y * by });
+    const strip = polygon(corners(c(-500), c(length(w) + 500), 1));
+    const near = grow(ringBox(corners(c(-500), c(length(w) + 500), 1)), 1);
+    return merge(
+      live(s.walls)
+        .filter(o => o.id !== w.id && meet(boxOf(o), near))
+        .filter(o => (['A', 'B'] as const).some(side => roomsOnSide(s, o.id, side).some(id => (rooms.get(id) ? isInside(rooms.get(id)!) : false))))
+        .flatMap((o): Interval[] => {
+          const ats = rings(intersection(strip, wallBody(o))).flat().map(q => along(w, q).at);
+          return ats.length ? [[Math.min(...ats), Math.max(...ats)]] : [];
+        }),
+    );
   };
-  return { from, to, before: reach(from), after: reach(to) };
+  const [inA, inB] = [cover(0, isInside), cover(1, isInside)];
+  const outdoor = (r: Room) => r.outdoor;
+  // walled is costly: only where one face is indoor and the other is not
+  const open = (mine: Interval[], other: Interval[], k: 0 | 1) => {
+    const left = minus(mine, other);
+    return left.length ? minus(left, walled(k)) : left;
+  };
+  return merge([...open(inA, inB, 1), ...open(inB, inA, 0), ...cover(0, outdoor), ...cover(1, outdoor)])
+    // a face piece may run on past the wall's own end into a joint; the wall's span ends with the wall
+    .map(([f, t]): Interval => [Math.max(0, f), Math.min(length(w), t)])
+    .filter(([f, t]) => t - f >= LEAST_EDGE)
+    .map(([f, t]) => spanOf(s, w, f, t));
 }
 
+/** The span with the corner joints at both ends, within the wall. */
+const guarded = (k: Span, l: number): Interval => [Math.max(0, k.from - k.before), Math.min(l, k.to + k.after)];
+const grow = (b: Box, by: number): Box => ({ x0: b.x0 - by, y0: b.y0 - by, x1: b.x1 + by, y1: b.y1 + by });
+
+/**
+ * What a change may do to a wall with locked spans: never deleted; split only outside its spans and their corner joints;
+ * an end moves only along the wall's own line, thickness kept, every span and joint still covered; no other wall laid
+ * along it (judged by what an edit adds, so an overlap a wall already had is no reason to lock it).
+ */
+function spanRules(spansOf: (s: State, wallId: Id) => Span[]) {
+  /** The part of w's body inside o's body over o's guarded spans, when w runs along o (under 15 degrees). */
+  const alongShared = (w: Wall, o: Wall, ks: Span[]): { area: number; extent: number } => {
+    const none = { area: 0, extent: Infinity };
+    const [l, lw] = [length(o), length(w)];
+    if (lw < LIMITS.wallLength - TOL) return none;
+    const v = { x: (o.b.x - o.a.x) / l, y: (o.b.y - o.a.y) / l };
+    if (Math.abs(((w.b.x - w.a.x) * v.y - (w.b.y - w.a.y) * v.x) / lw) >= LEAST_SINE) return none;
+    let [sum, lo, hi] = [0, Infinity, -Infinity];
+    for (const k of ks) {
+      const [from, to] = guarded(k, l);
+      const g = intersection(wallBody(w), polygon(corners(pointOn(o, from), pointOn(o, to), o.thickness)));
+      const ats = rings(g).flat().map(q => along(o, q).at);
+      if (!ats.length) continue;
+      sum += area(g);
+      [lo, hi] = [Math.min(lo, ...ats), Math.max(hi, ...ats)];
+    }
+    return hi > lo ? { area: sum, extent: hi - lo } : none;
+  };
+  return {
+    delete: (s: State, wallId: Id): boolean => spansOf(s, wallId).length === 0,
+    split: (s: State, wallId: Id, at: number): boolean =>
+      spansOf(s, wallId).every(k => at <= k.from - k.before + TOL || at >= k.to + k.after - TOL),
+    set: (s: State, old: Wall, w: Wall): boolean => {
+      const ks = spansOf(s, old.id).map(k => guarded(k, length(old)));
+      if (!ks.length) return true;
+      const [from, to] = [Math.min(...ks.map(k => k[0])), Math.max(...ks.map(k => k[1]))];
+      return onLine(old, w) && along(old, w.a).at <= from + TOL && along(old, w.b).at >= to - TOL;
+    },
+    lay: (s: State, w: Wall, old?: Wall): boolean => {
+      const near = grow(boxOf(w), 1);
+      return !live(s.walls).some(o => {
+        if (o.id === w.id || !meet(boxOf(o), near)) return false;
+        const ks = spansOf(s, o.id);
+        if (!ks.length) return false;
+        const now = alongShared(w, o, ks);
+        return now.area - (old ? alongShared(old, o, ks).area : 0) > TOL * now.extent;
+      });
+    },
+  };
+}
 /**
  * What a change may do to a wall while a room is marked as the mamad (owner: only the mamad is locked, not the whole
- * wall). A wall that bounds it is never deleted; it is split only outside its span and the corner joints there; its end
- * moves only along its own line, thickness kept, the span still covered.
+ * wall); delete is refused exactly for a wall that bounds it.
  */
-export const mamadAllows = {
-  delete: (s: State, wallId: Id): boolean => !wallBoundsMamad(s, wallId),
-  split: (s: State, wallId: Id, at: number): boolean => {
-    const k = mamadSpan(s, wallId);
-    return !k || at <= k.from - k.before + TOL || at >= k.to + k.after - TOL;
-  },
-  set: (s: State, old: Wall, w: Wall): boolean => {
-    const k = mamadSpan(s, old.id);
-    if (!k) return true;
-    const [from, to] = guarded(k, length(old));
-    return onLine(old, w) && along(old, w.a).at <= from + TOL && along(old, w.b).at >= to - TOL;
-  },
-  /**
-   * w does not run along a wall that bounds the mamad, over its span and corner joints, by more than 0.01 mm of average
-   * width. With old (a changed wall), only what the change adds counts: an overlap the wall already had is no reason to
-   * lock it.
-   */
-  lay: (s: State, w: Wall, old?: Wall): boolean =>
-    !boundingWalls(s).some(o => {
-      if (o.id === w.id) return false;
-      const now = alongShared(s, w, o);
-      return now.area - (old ? alongShared(s, old, o).area : 0) > TOL * now.extent;
-    }),
-};
-/**
- * The part of w's body inside o's body over o's span and corner joints, when w runs along o (under 15 degrees): its
- * area, and the length along o it spans, so that the tolerance is an average width.
- */
-function alongShared(s: State, w: Wall, o: Wall): { area: number; extent: number } {
-  const none = { area: 0, extent: Infinity };
-  const [l, lw] = [length(o), length(w)];
-  if (lw < LIMITS.wallLength - TOL) return none;
-  const v = { x: (o.b.x - o.a.x) / l, y: (o.b.y - o.a.y) / l };
-  if (Math.abs(((w.b.x - w.a.x) * v.y - (w.b.y - w.a.y) * v.x) / lw) >= LEAST_SINE) return none;
-  const [from, to] = guarded(mamadSpan(s, o.id)!, l);
-  const at = (t: number) => ({ x: o.a.x + v.x * t, y: o.a.y + v.y * t });
-  const g = intersection(wallBody(w), polygon(corners(at(from), at(to), o.thickness)));
-  const ats = rings(g).flat().map(q => along(o, q).at);
-  return ats.length ? { area: area(g), extent: Math.max(...ats) - Math.min(...ats) } : none;
-}
-/** The span with the corner joints at both ends, within the wall. */
-const guarded = (k: { from: number; to: number; before: number; after: number }, l: number): [number, number] => [
-  Math.max(0, k.from - k.before),
-  Math.min(l, k.to + k.after),
-];
+export const mamadAllows = spanRules(mamadSpans);
+/** The same for the outer walls while the envelope is locked (8c). */
+export const envelopeAllows = spanRules(envelopeSpans);
 const boundingWalls = (s: State): Wall[] => {
   const m = mamadOf(s);
   if (!m) return [];
@@ -254,6 +333,72 @@ export function separatorBoundsMamad(s: State, separatorId: Id): boolean {
     const q = ring[(i + 1) % ring.length];
     return dist(p, q) >= LEAST_EDGE && on(p) && on(q);
   }));
+}
+
+/**
+ * The envelope is unchanged around a change (8c): near it, every outer stretch of one state lies on a wall of the same
+ * line and thickness whose outer stretches, with their corner joints, cover it in the other state. Both ways, so that no
+ * outer wall is moved, thickened or lost, and no inner wall becomes an outer one.
+ */
+export function envelopeKept(before: State, after: State, near: Box): boolean {
+  const spans = (s: State) =>
+    live(s.walls)
+      .filter(w => meet(boxOf(w), near))
+      .map(w => ({ w, ks: envelopeSpans(s, w.id) }));
+  const [b, a] = [spans(before), spans(after)];
+  const covered = ({ w, ks }: { w: Wall; ks: Span[] }, other: { w: Wall; ks: Span[] }[]) => {
+    const cover = merge(
+      other
+        .filter(o => onLine(w, o.w))
+        .flatMap(o => o.ks.map(k => guarded(k, length(o.w)).map(t => along(w, pointOn(o.w, t)).at).sort((x, y) => x - y) as Interval)),
+    );
+    return ks.every(k => cover.some(([x0, x1]) => x0 <= k.from + TOL && x1 >= k.to - TOL));
+  };
+  return b.every(x => covered(x, a)) && a.every(x => covered(x, b));
+}
+/** The box of what differs between two states (walls, separators, and the rooms around them), grown by 2 m. */
+export function changedBox(before: State, after: State, rooms: Room[] = []): Box {
+  const boxes = [
+    ...before.walls.filter(w => !after.walls.includes(w)),
+    ...after.walls.filter(w => !before.walls.includes(w)),
+  ].map(boxOf);
+  const lines = [...before.separators.filter(x => !after.separators.includes(x)), ...after.separators.filter(x => !before.separators.includes(x))];
+  boxes.push(...lines.map(x => ringBox([x.a, x.b])), ...rooms.map(r => ringBox(r.boundary)));
+  if (!boxes.length) return { x0: 0, y0: 0, x1: -1, y1: -1 };
+  const base = boxes.reduce((u, x) => ({ x0: Math.min(u.x0, x.x0), y0: Math.min(u.y0, x.y0), x1: Math.max(u.x1, x.x1), y1: Math.max(u.y1, x.y1) }));
+  const touched = [...before.rooms, ...after.rooms].map(r => ringBox(r.boundary)).filter(x => meet(x, base));
+  return grow(touched.reduce((u, x) => ({ x0: Math.min(u.x0, x.x0), y0: Math.min(u.y0, x.y0), x1: Math.max(u.x1, x.x1), y1: Math.max(u.y1, x.y1) }), base), 2000);
+}
+const ringBox = (ring: Pt[]): Box => ({
+  x0: Math.min(...ring.map(q => q.x)),
+  y0: Math.min(...ring.map(q => q.y)),
+  x1: Math.max(...ring.map(q => q.x)),
+  y1: Math.max(...ring.map(q => q.y)),
+});
+
+/**
+ * Why an opening may not be changed in the existing state (8c, owner round 10): an opening on a wall that bounds the
+ * mamad, a window and an entry door are locked from the moment they exist, until the designer releases them.
+ */
+export function openingLock(s: State, o: Opening): Reason | null {
+  if (o.released) return null;
+  if (wallBoundsMamad(s, o.wallId)) return 'mamad-locked';
+  return o.kind === 'window' ? 'window-locked' : o.kind === 'entry' ? 'entry-door-locked' : null;
+}
+
+/**
+ * What approval still waits for (Task 12 reads only this): something released, the envelope not confirmed, an
+ * opening of the apartment (on a wall beside an apartment room) not confirmed.
+ */
+export function confirmationGaps(p: Project): ('released' | 'envelope-unconfirmed' | 'opening-unconfirmed')[] {
+  const s = p.existing;
+  const apartment = new Set(s.rooms.filter(r => r.inApartment).map(r => r.id));
+  const ofApartment = (o: Opening) => (['A', 'B'] as const).some(side => roomsOnSide(s, o.wallId, side).some(id => apartment.has(id)));
+  const gaps: ('released' | 'envelope-unconfirmed' | 'opening-unconfirmed')[] = [];
+  if (p.envelope === 'released' || s.openings.some(o => o.released)) gaps.push('released');
+  if (p.envelope !== 'confirmed') gaps.push('envelope-unconfirmed');
+  if (s.openings.some(o => !o.confirmed && ofApartment(o))) gaps.push('opening-unconfirmed');
+  return gaps;
 }
 
 /** Walls of no stored class (or 'unknown') that hold a window, lie on the apartment's edge, or are columns. */

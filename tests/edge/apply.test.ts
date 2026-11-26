@@ -2,6 +2,7 @@ import { expect, it } from 'vitest';
 import { apply } from '../../src/model/apply';
 import { createHistory } from '../../src/model/history';
 import { computeRooms } from '../../src/model/rooms';
+import { envelopeKept, openingLock } from '../../src/model/rules';
 import { ProjectSchema } from '../../src/model/schema';
 import type { Action, Project, Pt } from '../../src/model/types';
 import { boxProject } from '../fixtures/box';
@@ -17,6 +18,14 @@ const randomFrom = (seed: number) => () => {
   t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
   return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
 };
+const EVERYWHERE = { x0: -1e7, y0: -1e7, x1: 1e7, y1: 1e7 };
+/** Where an opening starts and ends on the page, to 0.01 mm. */
+const place = (s: { walls: { id: string; a: Pt; b: Pt }[] }, o: { wallId: string; offset: number; width: number }) => {
+  const w = s.walls.find(x => x.id === o.wallId)!;
+  const l = Math.hypot(w.b.x - w.a.x, w.b.y - w.a.y);
+  const at = (t: number) => [w.a.x + ((w.b.x - w.a.x) * t) / l, w.a.y + ((w.b.y - w.a.y) * t) / l].map(v => Math.round(v * 100) / 100);
+  return [...at(o.offset), ...at(o.offset + o.width)];
+};
 const GEOMETRIC = ['x.addWall', 'x.setWall', 'x.deleteWall', 'x.splitWall', 'x.addSeparator', 'x.deleteSeparator', 'rescale'];
 
 /** One action of any type, near the box's faces, with some garbage. */
@@ -29,7 +38,7 @@ function action(p: Project, r: () => number): Action {
   const id = (list: { id: string }[]) => (r() < 0.05 || !list.length ? 'nope' : pick(list).id);
   const n = (v: number) => (r() < 0.03 ? pick([NaN, Infinity, -1, 0, 1e7]) : v);
   const end = () => pick<{ a: Pt }>(s.walls.length ? s.walls : [{ a: P() }]).a;
-  switch (whole(0, 22)) {
+  switch (whole(0, 25)) {
     case 0:
     case 1:
       return { type: 'x.addWall', a: P(), b: P(), thickness: n(pick([100, 200, 20, 1000, 19])) };
@@ -79,6 +88,12 @@ function action(p: Project, r: () => number): Action {
       return { type: 'setPlaster', plaster: pick(['none', 'line', 'inWall', 'unknown', 'both'] as never[]) };
     case 21:
       return { type: 'n.setColorLabel', hex: pick(['#808080', '#000000']), label: 'x'.repeat(whole(0, 210)) };
+    case 22:
+      return { type: 'x.releaseOpenings', ids: r() < 0.1 ? ['nope'] : s.openings.filter(() => r() < 0.5).map(o => o.id) };
+    case 23:
+      return { type: 'x.confirmEnvelope' };
+    case 24:
+      return { type: 'x.releaseEnvelope' };
     default:
       return { type: pick(['approve', 'p.moveWall', 'setFinish', 'x.bogus', 'constructor']) } as never;
   }
@@ -92,6 +107,9 @@ it(
     // the first sequences start with one action per reason, so that every reason is reached at any RUNS
     const seeded: Action[][] = [
       [
+        { type: 'x.setOpening', id: 'window', offset: 1000 },
+        { type: 'x.deleteOpening', id: 'entry' },
+        { type: 'x.deleteWall', id: 'left' },
         { type: 'x.addWall', a: { x: NaN, y: 0 }, b: { x: 1000, y: 0 }, thickness: 100 },
         { type: 'x.addWall', a: { x: 1000, y: 1000 }, b: { x: 1005, y: 1000 }, thickness: 100 },
         { type: 'x.addOpening', wallId: 'part', offset: 3500, width: 800, kind: 'door' },
@@ -106,6 +124,8 @@ it(
     for (let seq = 0; seq < Math.max(seeded.length, Math.round(RUNS / LENGTH)); seq++) {
       // unfrozen: a mutation of the input must show as a difference, not as a TypeError reported as invalid-action
       let p: Project = { ...boxProject(), sourceColors: [{ hex: '#808080', label: '' }], ...(seq === 1 ? { approved: true, mamad: 'none' as const } : {}) };
+      // every other sequence starts with the 8c locks released, so that the geometry is exercised too
+      if (seq > 1 && seq % 2) p = { ...p, envelope: 'released', existing: { ...p.existing, openings: p.existing.openings.map(o => ({ ...o, released: true })) } };
       const h = createHistory(1000);
       h.push(p);
       const trail = [p];
@@ -126,6 +146,15 @@ it(
           ring.boundary.forEach((q, k) => expect(Math.hypot(q.x - now.boundary[k].x, q.y - now.boundary[k].y), JSON.stringify(a)).toBeLessThan(0.03));
           expect(now.holes.length).toBe(ring.holes.length);
         }
+        if (a.type.startsWith('x.')) {
+          // 8c: locked openings keep their place, and a locked envelope its outer stretches
+          for (const o of p.existing.openings.filter(x => openingLock(p.existing, x))) {
+            const now = res.project.existing.openings.find(x => x.id === o.id);
+            expect(now && [now.kind, now.width], JSON.stringify(a)).toEqual([o.kind, o.width]);
+            expect(place(res.project.existing, now!), JSON.stringify(a)).toEqual(place(p.existing, o));
+          }
+          if (p.envelope !== 'released') expect(envelopeKept(p.existing, res.project.existing, EVERYWHERE), JSON.stringify(a)).toBe(true);
+        }
         const parsed = ProjectSchema.safeParse(res.project);
         expect(parsed.success, `${JSON.stringify(a)}: ${parsed.error?.issues[0]?.message}`).toBe(true);
         if (GEOMETRIC.includes(a.type) && res.project.existing !== p.existing) {
@@ -144,7 +173,7 @@ it(
       expect(h.redo()).toBe(null);
     }
     expect([...reached].sort()).toEqual(
-      ['existing-approved', 'invalid-action', 'invalid-geometry', 'invalid-number', 'mamad-locked', 'mamad-outdoor', 'ok', 'opening-out-of-wall', 'text-too-long'],
+      ['entry-door-locked', 'envelope-locked', 'existing-approved', 'invalid-action', 'invalid-geometry', 'invalid-number', 'mamad-locked', 'mamad-outdoor', 'ok', 'opening-out-of-wall', 'text-too-long', 'window-locked'],
     );
   },
   LIMIT,

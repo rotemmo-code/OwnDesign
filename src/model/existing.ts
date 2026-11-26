@@ -2,7 +2,12 @@ import { dist } from './geo';
 import { computeRooms } from './rooms';
 import {
   type Change,
+  changedBox,
+  envelopeAllows,
+  envelopeKept,
   type Handlers,
+  onLine,
+  openingLock,
   openingsFit,
   refuse,
   separatorBoundsMamad,
@@ -33,6 +38,13 @@ const length = (w: { a: Pt; b: Pt }) => dist(w.a, w.b);
 const notice = (project: Project, n?: Notice): Change => (n === undefined ? { project } : { project, notice: n });
 const withState = (p: Project, existing: State): Project => ({ ...p, existing });
 const mamadLocked = (fact: boolean) => fact && refuse('mamad-locked');
+/** The outer walls are locked unless the designer released them (8c). */
+const envelopeLocked = (p: Project, fact: boolean) => fact && p.envelope !== 'released' && refuse('envelope-locked');
+/** A wall that carries a locked window, entry door or mamad opening keeps its line and thickness (8c, rule 2). */
+function openingsHold(s: State, old: Wall, w?: Wall) {
+  const lock = s.openings.filter(o => o.wallId === old.id).map(o => openingLock(s, o)).find(r => r !== null);
+  if (lock && (!w || !onLine(old, w))) refuse(lock);
+}
 
 /** mm: points this close are one point (rooms.ts). */
 const HAIR = 0.03;
@@ -50,7 +62,8 @@ const sameRoom = (r: Room, q: Room | undefined) =>
 /**
  * The recompute after a geometric change of the existing state: caps, the changed walls, the rooms, the mamad rules.
  * mustSplit: an added separator that cuts nothing is refused. mamadMayChange: only rescale, which scales everything;
- * otherwise the mamad's outline and holes must come out as they were (owner round 8).
+ * otherwise the mamad's outline and holes must come out as they were (owner round 8), and so must the envelope while
+ * it is locked (8c).
  */
 export function rebuildExisting(
   p: Project,
@@ -71,6 +84,8 @@ export function rebuildExisting(
   }
   const before = s.rooms.find(r => r.isMamad);
   if (before && !mamadMayChange && (!sameRoom(before, out.rooms.find(r => r.id === before.id)) || !mamadWallsKept(p.existing, s))) refuse('mamad-locked');
+  const after = { ...s, rooms: out.rooms };
+  if (p.envelope !== 'released' && !mamadMayChange && !envelopeKept(p.existing, after, changedBox(p.existing, after))) refuse('envelope-locked');
   const order = new Map(s.rooms.map((r, i) => [r.id, i]));
   let rooms = [...out.rooms].sort((x, y) => (order.get(x.id) ?? Infinity) - (order.get(y.id) ?? Infinity));
   let mamad = p.mamad;
@@ -93,6 +108,7 @@ export const existingHandlers: Handlers = {
     const s = p.existing;
     const w: Wall = { id: crypto.randomUUID(), a: pt(a.a), b: pt(a.b), thickness: num(a.thickness), finishA: null, finishB: null, source: 'manual', review: false };
     mamadLocked(wallEntersMamad(s, w) || !mamadAllows.lay(s, w));
+    envelopeLocked(p, !envelopeAllows.lay(s, w));
     return rebuildExisting(p, { ...s, walls: [...s.walls, w] }, [w.id]);
   },
   'x.deleteWall': (p, a) => {
@@ -100,6 +116,8 @@ export const existingHandlers: Handlers = {
     const s = p.existing;
     const w = find(s.walls, a.id);
     mamadLocked(!mamadAllows.delete(s, w.id));
+    envelopeLocked(p, !envelopeAllows.delete(s, w.id));
+    openingsHold(s, w);
     const { [w.id]: _, ...wallClass } = p.wallClass;
     const next = { ...s, walls: s.walls.filter(x => x !== w), openings: s.openings.filter(o => o.wallId !== w.id) };
     return rebuildExisting({ ...p, wallClass }, next, []);
@@ -119,6 +137,8 @@ export const existingHandlers: Handlers = {
     // side A stays side A, so a finish never changes sides
     if ((w.b.x - w.a.x) * (old.b.x - old.a.x) + (w.b.y - w.a.y) * (old.b.y - old.a.y) <= 0) refuse('invalid-geometry');
     mamadLocked(!mamadAllows.set(s, old, w) || wallEntersMamad(s, w) || !mamadAllows.lay(s, w, old));
+    envelopeLocked(p, !envelopeAllows.set(s, old, w) || !envelopeAllows.lay(s, w, old));
+    openingsHold(s, old, w);
     // M13: when end a slides along the wall by shift, the openings stay where they are
     const shift = ((w.a.x - old.a.x) * (w.b.x - w.a.x) + (w.a.y - old.a.y) * (w.b.y - w.a.y)) / l;
     const openings = shift ? s.openings.map(o => (o.wallId === w.id ? { ...o, offset: o.offset - shift } : o)) : s.openings;
@@ -130,6 +150,7 @@ export const existingHandlers: Handlers = {
     const w = find(s.walls, a.id);
     const at = num(a.at);
     mamadLocked(!mamadAllows.split(s, w.id, at));
+    envelopeLocked(p, !envelopeAllows.split(s, w.id, at));
     const l = length(w);
     if (at < LIMITS.wallLength - TOL || l - at < LIMITS.wallLength - TOL) refuse('invalid-geometry');
     const m = { x: w.a.x + ((w.b.x - w.a.x) * at) / l, y: w.a.y + ((w.b.y - w.a.y) * at) / l };
@@ -154,6 +175,8 @@ export const existingHandlers: Handlers = {
     locked(p);
     const s = p.existing;
     const old = find(s.openings, a.id);
+    const lock = openingLock(s, old);
+    if (lock) refuse(lock);
     const o: Opening = {
       ...old,
       offset: a.offset === undefined ? old.offset : num(a.offset),
@@ -166,6 +189,8 @@ export const existingHandlers: Handlers = {
   'x.deleteOpening': (p, a) => {
     locked(p);
     const o = find(p.existing.openings, a.id);
+    const lock = openingLock(p.existing, o);
+    if (lock) refuse(lock);
     return { project: withState(p, { ...p.existing, openings: p.existing.openings.filter(x => x !== o) }) };
   },
   'x.addSeparator': (p, a) => {
@@ -193,7 +218,25 @@ export const existingHandlers: Handlers = {
     const s = p.existing;
     const ids = new Set(a.ids);
     if (!ids.size || [...ids].some(id => !s.openings.some(o => o.id === id))) refuse('invalid-action');
-    return { project: withState(p, { ...s, openings: s.openings.map(o => (ids.has(o.id) ? { ...o, confirmed: true, review: false } : o)) }) };
+    // confirming locks again what was released
+    const confirm = ({ released: _, ...o }: Opening): Opening => ({ ...o, confirmed: true, review: false });
+    return { project: withState(p, { ...s, openings: s.openings.map(o => (ids.has(o.id) ? confirm(o) : o)) }) };
+  },
+  'x.releaseOpenings': (p, a) => {
+    locked(p);
+    const s = p.existing;
+    const ids = new Set(a.ids);
+    if (!ids.size || [...ids].some(id => !s.openings.some(o => o.id === id))) refuse('invalid-action');
+    return { project: withState(p, { ...s, openings: s.openings.map(o => (ids.has(o.id) ? { ...o, released: true, confirmed: false } : o)) }) };
+  },
+  'x.confirmEnvelope': p => {
+    locked(p);
+    if (!p.existing.rooms.some(r => r.inApartment && !r.outdoor)) refuse('invalid-action');
+    return { project: { ...p, envelope: 'confirmed' } };
+  },
+  'x.releaseEnvelope': p => {
+    locked(p);
+    return { project: { ...p, envelope: 'released' } };
   },
   'x.setRoom': (p, a) => {
     locked(p);
@@ -206,7 +249,10 @@ export const existingHandlers: Handlers = {
       outdoor: a.outdoor ?? r.outdoor,
     };
     if (n.isMamad && n.outdoor) refuse('mamad-outdoor');
-    return { project: withState(p, { ...s, rooms: s.rooms.map(x => (x === r ? n : x)) }) };
+    const next = { ...s, rooms: s.rooms.map(x => (x === r ? n : x)) };
+    const flipped = n.inApartment !== r.inApartment || n.outdoor !== r.outdoor;
+    envelopeLocked(p, flipped && !envelopeKept(s, next, changedBox(s, next, [r])));
+    return { project: withState(p, next) };
   },
   'x.keepName': (p, a) => {
     locked(p);
