@@ -131,33 +131,61 @@ export const mamadAllows = {
   },
   set: (s: State, old: Wall, w: Wall): boolean => {
     const k = mamadSpan(s, old.id);
-    return !k || (onLine(old, w) && along(old, w.a).at <= k.from + TOL && along(old, w.b).at >= k.to - TOL);
+    if (!k) return true;
+    const [from, to] = guarded(k, length(old));
+    return onLine(old, w) && along(old, w.a).at <= from + TOL && along(old, w.b).at >= to - TOL;
   },
+  /** w (new or changed) does not run along a wall that bounds the mamad, over its span and corner joints. */
+  lay: (s: State, w: Wall): boolean => {
+    if (length(w) < LIMITS.wallLength - TOL) return true;
+    const body = wallBody(w);
+    const u = { x: (w.b.x - w.a.x) / length(w), y: (w.b.y - w.a.y) / length(w) };
+    return !boundingWalls(s).some(o => {
+      if (o.id === w.id) return false;
+      const l = length(o);
+      const v = { x: (o.b.x - o.a.x) / l, y: (o.b.y - o.a.y) / l };
+      if (Math.abs(u.x * v.y - u.y * v.x) >= ALONG) return false;
+      const [from, to] = guarded(mamadSpan(s, o.id)!, l);
+      const at = (t: number) => ({ x: o.a.x + v.x * t, y: o.a.y + v.y * t });
+      const g = intersection(body, polygon(corners(at(from), at(to), o.thickness)));
+      const ats = rings(g).flat().map(q => along(o, q).at);
+      // more than 0.01 mm wide on average over the length they share
+      return ats.length > 0 && area(g) > TOL * (Math.max(...ats) - Math.min(...ats));
+    });
+  },
+};
+/** The span with the corner joints at both ends, within the wall. */
+const guarded = (k: { from: number; to: number; before: number; after: number }, l: number): [number, number] => [
+  Math.max(0, k.from - k.before),
+  Math.min(l, k.to + k.after),
+];
+/** The value of LEAST_SINE in join.ts (not exported there): under it a wall runs along another instead of meeting it. */
+const ALONG = Math.sin((14.99 * Math.PI) / 180);
+const boundingWalls = (s: State): Wall[] => {
+  const m = mamadOf(s);
+  if (!m) return [];
+  const xs = m.boundary.map(q => q.x);
+  const ys = m.boundary.map(q => q.y);
+  const room: Box = { x0: Math.min(...xs) - 1, x1: Math.max(...xs) + 1, y0: Math.min(...ys) - 1, y1: Math.max(...ys) + 1 };
+  return live(s.walls).filter(w => meet(boxOf(w), room) && mamadSpan(s, w.id) !== null);
 };
 
 /**
  * After a change: every wall that bounded the mamad before still lies there, same line and thickness, along all of its
- * span (any wall on that line counts, so the two parts of a split do). The outline guard alone misses a wall thickened or
+ * span and the corner joints at its ends (any wall on that line counts, so the two parts of a split do). The outline guard alone misses a wall thickened or
  * thinned outward, which keeps the inside face.
  */
 export function mamadWallsKept(before: State, after: State): boolean {
-  const m = mamadOf(before);
-  if (!m) return true;
-  const xs = m.boundary.map(q => q.x);
-  const ys = m.boundary.map(q => q.y);
-  const room: Box = { x0: Math.min(...xs) - 1, x1: Math.max(...xs) + 1, y0: Math.min(...ys) - 1, y1: Math.max(...ys) + 1 };
-  return before.walls
-    .filter(w => meet(boxOf(w), room))
-    .every(w => {
-      const k = mamadSpan(before, w.id);
-      if (!k) return true;
+  if (!mamadOf(before)) return true;
+  return boundingWalls(before).every(w => {
+      const [from, to] = guarded(mamadSpan(before, w.id)!, length(w));
       const cover = live(after.walls)
         .filter(q => onLine(w, q))
         .map(q => [along(w, q.a).at, along(w, q.b).at].sort((x, y) => x - y))
         .sort((x, y) => x[0] - y[0]);
-      let reached = k.from;
+      let reached = from;
       for (const [x0, x1] of cover) if (x0 <= reached + TOL) reached = Math.max(reached, x1);
-      return reached >= k.to - TOL;
+      return reached >= to - TOL;
     });
 }
 

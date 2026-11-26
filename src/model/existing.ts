@@ -92,7 +92,7 @@ export const existingHandlers: Handlers = {
     locked(p);
     const s = p.existing;
     const w: Wall = { id: crypto.randomUUID(), a: pt(a.a), b: pt(a.b), thickness: num(a.thickness), finishA: null, finishB: null, source: 'manual', review: false };
-    mamadLocked(wallEntersMamad(s, w));
+    mamadLocked(wallEntersMamad(s, w) || !mamadAllows.lay(s, w));
     return rebuildExisting(p, { ...s, walls: [...s.walls, w] }, [w.id]);
   },
   'x.deleteWall': (p, a) => {
@@ -118,7 +118,7 @@ export const existingHandlers: Handlers = {
     if (l < LIMITS.wallLength - TOL) refuse('invalid-geometry');
     // side A stays side A, so a finish never changes sides
     if ((w.b.x - w.a.x) * (old.b.x - old.a.x) + (w.b.y - w.a.y) * (old.b.y - old.a.y) <= 0) refuse('invalid-geometry');
-    mamadLocked(!mamadAllows.set(s, old, w) || wallEntersMamad(s, w));
+    mamadLocked(!mamadAllows.set(s, old, w) || wallEntersMamad(s, w) || !mamadAllows.lay(s, w));
     // M13: when end a slides along the wall by shift, the openings stay where they are
     const shift = ((w.a.x - old.a.x) * (w.b.x - w.a.x) + (w.a.y - old.a.y) * (w.b.y - w.a.y)) / l;
     const openings = shift ? s.openings.map(o => (o.wallId === w.id ? { ...o, offset: o.offset - shift } : o)) : s.openings;
@@ -212,10 +212,11 @@ export const existingHandlers: Handlers = {
     const s = p.existing;
     const [r, q] = [find(s.rooms, a.room), find(s.rooms, a.part)];
     if (r === q) refuse('invalid-action');
-    // identity moves, the place stays: id, name and the mark change rooms
-    const take = (x: Room, y: Room): Room => ({ ...x, id: y.id, name: y.name, isMamad: y.isMamad });
+    // a mamad is never split, and a merge is answered with x.setRoom
+    if (r.isMamad || q.isMamad) refuse('mamad-locked');
+    // identity moves, the place stays: id and name change rooms
+    const take = (x: Room, y: Room): Room => ({ ...x, id: y.id, name: y.name });
     const rooms = s.rooms.map(x => (x === r ? take(r, q) : x === q ? take(q, r) : x));
-    if (rooms.some(x => x.isMamad && x.outdoor)) refuse('mamad-outdoor');
     return { project: withState(p, { ...s, rooms }) };
   },
   setMamad: (p, a) => {
