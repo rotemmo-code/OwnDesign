@@ -45,7 +45,7 @@ defects, for example a diagonal wall touching another only by a corner that left
 ## Tests
 
 `cd pdf-importer && npm ci && npm run verify`: typecheck, unit, edge, regression and browser tests
-(Chromium and Firefox), then `npm audit`. After the state transition was merged: 482 unit, 28 edge and
+(Chromium and Firefox), then `npm audit`. After the mamad lock was refined: 497 unit, 28 edge and
 202 browser tests pass; the 20 regression tests need private sample drawings and skip without them.
 
 ## Privacy

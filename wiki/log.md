@@ -137,3 +137,10 @@ inside it while it is marked; its door and window can be corrected; two doors or
 mamad opening are valid. Review found a long wall could still reach into the mamad and a chain of
 three overlapping doors was accepted; both fixed (the mamad's outline must come out unchanged).
 Tests: 482 unit, 28 edge (30,000-step random walk), 202 browser. Pages: [pdf-importer](pdf-importer.md).
+
+## [2026-11-26] build | PDF importer: only the mamad is locked, not the whole wall
+User decision: a long wall that bounds the mamad and another room may be corrected outside the
+mamad (split before the mamad's corner joint, far end moved along its line); along the mamad its
+line, thickness and corner joints are kept, it cannot be deleted, and no wall may be laid along it.
+Review found the corner joint could be uncovered and that the new rule blocked an ordinary edit of a
+neighbouring wall; both fixed. Tests: 497 unit, 28 edge, 202 browser. Pages: [pdf-importer](pdf-importer.md).
