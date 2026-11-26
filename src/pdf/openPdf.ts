@@ -1,11 +1,15 @@
 import { TIMEOUT_MS } from '../limits';
 import type { ExtractedPage, OpenError } from './extract';
+import type { Box, Picture } from './render';
 
 type Refusal = { ok: false; code: OpenError };
-export type ReaderRequest = { open: ArrayBuffer } | { page: number };
+export type ReaderRequest = { open: ArrayBuffer } | { page: number; width: number; height: number } | { box: Box; scale: number };
 export type PdfSession = {
   pageCount: number;
-  extract(pageNo: number): Promise<{ ok: true; page: ExtractedPage } | Refusal>;
+  /** Reads a page and draws it whole, to fit width x height screen pixels. One time limit for both. */
+  show(pageNo: number, width: number, height: number): Promise<{ ok: true; page: ExtractedPage; picture: Picture } | Refusal>;
+  /** Draws a part of the page shown last, at scale screen pixels per point. */
+  draw(box: Box, scale: number): Promise<{ ok: true; picture: Picture } | Refusal>;
   close(): void;
 };
 
@@ -51,7 +55,8 @@ export async function openPdf(bytes: ArrayBuffer): Promise<{ ok: true; session: 
     ok: true,
     session: {
       pageCount: opened.pageCount,
-      extract: page => ask<{ ok: true; page: ExtractedPage }>({ page }),
+      show: (page, width, height) => ask<{ ok: true; page: ExtractedPage; picture: Picture }>({ page, width, height }),
+      draw: (box, scale) => ask<{ ok: true; picture: Picture }>({ box, scale }),
       close: () => end('failed'),
     },
   };

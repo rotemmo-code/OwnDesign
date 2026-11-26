@@ -54,12 +54,20 @@ it('starts a module worker and does not transfer the bytes', async () => {
 it('asks for a page and passes the answer on', async () => {
   const { worker, session } = await opened();
   expect(session.pageCount).toBe(2);
-  const extracting = session.extract(2);
-  expect(worker.sent[1]).toEqual([{ id: 2, page: 2 }]);
+  const extracting = session.show(2, 1500, 900);
+  expect(worker.sent[1]).toEqual([{ id: 2, page: 2, width: 1500, height: 900 }]);
   const refused = { ok: false, code: 'image-only' };
   worker.says({ id: 2, result: refused });
   expect(await extracting).toEqual(refused);
   expect(worker.terminated).toBe(0); // another page may still be read
+});
+
+it('asks for a part of the page to be drawn', async () => {
+  const { worker, session } = await opened();
+  const drawing = session.draw([1, 2, 30, 40], 5);
+  expect(worker.sent[1]).toEqual([{ id: 2, box: [1, 2, 30, 40], scale: 5 }]);
+  worker.says({ id: 2, result: { ok: true, picture: 'picture' } });
+  expect(await drawing).toEqual({ ok: true, picture: 'picture' });
 });
 
 it('ignores messages that are not ours', async () => {
@@ -92,11 +100,11 @@ it('each request has its own 30 s', async () => {
   const { worker, session } = await opened();
   await vi.advanceTimersByTimeAsync(2 * TIMEOUT_MS);
   expect(worker.terminated).toBe(0);
-  const extracting = session.extract(1);
+  const extracting = session.show(1, 1500, 900);
   await vi.advanceTimersByTimeAsync(TIMEOUT_MS);
   expect(await extracting).toEqual({ ok: false, code: 'timeout' });
   session.close();
-  expect(await session.extract(1)).toEqual({ ok: false, code: 'timeout' });
+  expect(await session.show(1, 1500, 900)).toEqual({ ok: false, code: 'timeout' });
 });
 
 it('a worker error is failed; close settles what is pending', async () => {
@@ -107,11 +115,11 @@ it('a worker error is failed; close settles what is pending', async () => {
     expect(StubWorker.last.terminated).toBeGreaterThan(0);
   }
   const { worker, session } = await opened();
-  const pending = session.extract(1);
+  const pending = session.show(1, 1500, 900);
   session.close();
   expect(worker.terminated).toBe(1);
   expect(await pending).toEqual({ ok: false, code: 'failed' });
-  expect(await session.extract(1)).toEqual({ ok: false, code: 'failed' });
+  expect(await session.show(1, 1500, 900)).toEqual({ ok: false, code: 'failed' });
 });
 
 it('a buffer that cannot be sent is failed', async () => {
@@ -133,16 +141,27 @@ it('a refusal ends the worker', async () => {
   expect(worker.terminated).toBe(1);
 });
 
-// Node has no Web Worker, so the worker's own side is loaded here with a made-up global scope and a made-up reader.
+// Node has no Web Worker, so the worker's own side is loaded here with a made-up global scope, reader and drawing.
 describe('reader.worker', () => {
   const reader = { openDocument: vi.fn(), extractPage: vi.fn() };
+  const render = { DRAWING: { with: 'images' }, drawPage: vi.fn() };
   const post = vi.fn();
+  const said = () => post.mock.calls.map(([message]) => message);
   let receive: (event: { data: unknown }) => Promise<void>;
+
+  const ASSETS = 'https://example.invalid/pdfjs/';
+  const pageOne = { number: 1, cleanup: vi.fn() };
+  const pageTwo = { number: 2, cleanup: vi.fn() };
+  const doc = { numPages: 3 };
+  const drawn = { getPage: vi.fn() };
+  const ask = { width: 1684, height: 600 };
+  const read = { ok: true, page: { widthPt: 842, heightPt: 595 } };
 
   beforeEach(async () => {
     vi.resetModules();
     vi.resetAllMocks();
     vi.doMock('../../src/pdf/extract', () => reader);
+    vi.doMock('../../src/pdf/render', () => render);
     vi.doMock('pdfjs-dist/legacy/build/pdf.mjs', () => ({}));
     vi.doMock('pdfjs-dist/legacy/build/pdf.worker.mjs', () => ({}));
     vi.stubGlobal('location', { origin: 'https://example.invalid' });
@@ -151,44 +170,78 @@ describe('reader.worker', () => {
       receive = listener;
     });
     await import('../../src/pdf/reader.worker');
+    reader.openDocument.mockImplementation((_pdfjs, _bytes, _assets, drawing) => Promise.resolve({ ok: true, doc: drawing ? drawn : doc }));
+    reader.extractPage.mockResolvedValue(read);
+    render.drawPage.mockResolvedValue({ ok: true, picture: { bitmap: 'bitmap' } });
+    drawn.getPage.mockImplementation(n => Promise.resolve(n === 1 ? pageOne : pageTwo));
+    await receive({ data: { id: 1, open: Uint8Array.of(7, 8).buffer } });
   });
   afterEach(() => {
-    vi.doUnmock('../../src/pdf/extract');
-    vi.doUnmock('pdfjs-dist/legacy/build/pdf.mjs');
-    vi.doUnmock('pdfjs-dist/legacy/build/pdf.worker.mjs');
+    for (const module of ['../../src/pdf/extract', '../../src/pdf/render', 'pdfjs-dist/legacy/build/pdf.mjs', 'pdfjs-dist/legacy/build/pdf.worker.mjs']) vi.doUnmock(module);
   });
 
-  it('opens a file and reads its pages', async () => {
-    const doc = { numPages: 3 };
-    reader.openDocument.mockResolvedValue({ ok: true, doc });
-    await receive({ data: { id: 1, open: Uint8Array.of(7, 8).buffer } });
-    expect(reader.openDocument).toHaveBeenCalledWith(expect.anything(), Uint8Array.of(7, 8), 'https://example.invalid/pdfjs/');
-    reader.extractPage.mockResolvedValue({ ok: false, code: 'image-only' });
-    await receive({ data: { id: 2, page: 3 } });
-    expect(reader.extractPage).toHaveBeenCalledWith(expect.anything(), doc, 3);
-    expect(post.mock.calls).toEqual([[{ id: 1, result: { ok: true, pageCount: 3 } }], [{ id: 2, result: { ok: false, code: 'image-only' } }]]);
+  it('opens a file, reads a page without images and draws it whole from a second opening with them', async () => {
+    await receive({ data: { id: 2, page: 1, ...ask } });
+    await receive({ data: { id: 3, page: 2, ...ask } });
+    expect(reader.openDocument.mock.calls).toEqual([
+      [expect.anything(), Uint8Array.of(7, 8), ASSETS],
+      [expect.anything(), Uint8Array.of(7, 8), ASSETS, render.DRAWING],
+    ]);
+    expect(reader.extractPage.mock.calls).toEqual([[expect.anything(), doc, 1], [expect.anything(), doc, 2]]);
+    expect(render.drawPage.mock.calls).toEqual([pageOne, pageTwo].map(page => [expect.anything(), drawn, page, [0, 0, 842, 595], 600 / 595])); // it fits by its height
+    expect([pageOne.cleanup.mock.calls.length, pageTwo.cleanup.mock.calls.length]).toEqual([1, 0]); // the page before is given back
+    expect(said()).toEqual([{ id: 1, result: { ok: true, pageCount: 3 } }, ...[2, 3].map(id => ({ id, result: { ...read, picture: { bitmap: 'bitmap' } } }))]);
+    expect(post.mock.calls.map(([, options]) => options)).toEqual([{ transfer: [] }, { transfer: ['bitmap'] }, { transfer: ['bitmap'] }]); // moved, not copied
   });
 
-  it('passes a refusal on', async () => {
-    reader.openDocument.mockResolvedValue({ ok: false, code: 'locked' });
-    await receive({ data: { id: 1, open: new ArrayBuffer(1) } });
-    expect(post.mock.calls).toEqual([[{ id: 1, result: { ok: false, code: 'locked' } }]]);
+  it('draws a part of the page shown last', async () => {
+    await receive({ data: { id: 2, page: 2, ...ask } });
+    await receive({ data: { id: 3, box: [1, 2, 30, 40], scale: 5 } });
+    expect(render.drawPage.mock.lastCall).toEqual([expect.anything(), drawn, pageTwo, [1, 2, 30, 40], 5]);
+    expect(post.mock.lastCall).toEqual([{ id: 3, result: { ok: true, picture: { bitmap: 'bitmap' } } }, { transfer: ['bitmap'] }]);
   });
 
-  it('answers failed at once when opening or reading throws', async () => {
-    reader.openDocument.mockRejectedValue(new Error('out of memory'));
-    await receive({ data: { id: 1, open: new ArrayBuffer(1) } });
-    reader.extractPage.mockRejectedValue(new Error('out of memory'));
-    await receive({ data: { id: 2, page: 1 } });
-    expect(post.mock.calls).toEqual([1, 2].map(id => [{ id, result: { ok: false, code: 'failed' } }]));
+  it('answers one request after the other', async () => {
+    let finish = (_: object) => {};
+    reader.extractPage.mockReturnValueOnce(new Promise(resolve => (finish = resolve)));
+    const answers = [receive({ data: { id: 2, page: 1, ...ask } }), receive({ data: { id: 3, page: 2, ...ask } }), receive({ data: { id: 4, box: [1, 2, 30, 40], scale: 5 } })];
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(reader.extractPage).toHaveBeenCalledTimes(1);
+    finish(read);
+    await Promise.all(answers);
+    expect(said().map(({ id }) => id)).toEqual([1, 2, 3, 4]);
+    expect(render.drawPage.mock.lastCall![2]).toBe(pageTwo);
+  });
+
+  it('passes a refusal on, of opening, reading or drawing; a page that is refused is not drawn', async () => {
+    reader.openDocument.mockResolvedValueOnce({ ok: false, code: 'locked' });
+    await receive({ data: { id: 2, open: new ArrayBuffer(1) } });
+    reader.extractPage.mockResolvedValueOnce({ ok: false, code: 'image-only' });
+    await receive({ data: { id: 3, page: 1, ...ask } });
+    expect(render.drawPage).not.toHaveBeenCalled();
+    reader.openDocument.mockResolvedValueOnce({ ok: false, code: 'corrupt' });
+    await receive({ data: { id: 4, page: 1, ...ask } });
+    render.drawPage.mockResolvedValueOnce({ ok: false, code: 'corrupt' });
+    await receive({ data: { id: 5, page: 1, ...ask } });
+    expect(said().slice(1)).toEqual([[2, 'locked'], [3, 'image-only'], [4, 'corrupt'], [5, 'corrupt']].map(([id, code]) => ({ id, result: { ok: false, code } })));
+  });
+
+  it('answers failed at once when opening, reading or drawing throws', async () => {
+    const broken = new Error('out of memory');
+    reader.openDocument.mockRejectedValueOnce(broken);
+    await receive({ data: { id: 2, open: new ArrayBuffer(1) } });
+    reader.extractPage.mockRejectedValueOnce(broken);
+    await receive({ data: { id: 3, page: 1, ...ask } });
+    render.drawPage.mockRejectedValueOnce(broken);
+    await receive({ data: { id: 4, page: 1, ...ask } });
+    expect(said().slice(1)).toEqual([2, 3, 4].map(id => ({ id, result: { ok: false, code: 'failed' } })));
   });
 
   it('answers failed when the answer cannot be sent', async () => {
-    reader.extractPage.mockResolvedValue({ ok: true });
     post.mockImplementationOnce(() => {
       throw new Error('it could not be cloned');
     });
-    await receive({ data: { id: 3, page: 1 } });
-    expect(post.mock.calls.at(-1)).toEqual([{ id: 3, result: { ok: false, code: 'failed' } }]);
+    await receive({ data: { id: 2, page: 1, ...ask } });
+    expect(said().at(-1)).toEqual({ id: 2, result: { ok: false, code: 'failed' } });
   });
 });
