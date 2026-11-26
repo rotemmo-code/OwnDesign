@@ -6,7 +6,7 @@ import type { Pt, Room, RoomChange, State, Wall } from './types';
 /** Least floor between walls. */
 const MIN_SPACE = 249_999;
 /** Least part that a separator cuts off. */
-const MIN_PART = 999;
+export const MIN_PART = 999;
 /** Points this close are one point. */
 const HAIR = 0.03;
 
