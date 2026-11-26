@@ -162,3 +162,12 @@ gained two optional fields; earlier files open with these items locked. Review f
 outer wall's inside face was wrongly refused and that the locks cost 0.2 to 0.3 s per edit on a
 1,000-wall plan; both fixed (now about 0.03 to 0.13 s). Tests: 557 unit, 43 edge, 202 browser.
 Pages: [pdf-importer](pdf-importer.md).
+
+## [2026-11-26] build | PDF importer: calibration screen and free measuring
+The designer marks written dimensions (two snapped points and the number), the scale is fitted, and
+nothing can be measured before a scale is accepted; continuing without full verification leaves a
+permanent warning. User choices: marking at any zoom, the left button drags and a short click marks.
+Review found the snap preview went stale after a zoom without a pointer move (the click landed about
+7 cm off at 1:50) and a clip of 300,000 points crashed the page; both fixed, marks got an outline for
+contrast. Tests: 579 unit, 43 edge, 248 browser. Not checked: real drawings, touchpads, Safari.
+Pages: [pdf-importer](pdf-importer.md).

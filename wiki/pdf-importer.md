@@ -28,14 +28,15 @@ measurements. Source: [`../pdf-importer/`](../pdf-importer/README.md).
 | PDF read in a worker, vector paths with clips, colours and layers | `pdf-importer/src/pdf/` |
 | First screen: upload, page choice, the page drawn sharp again after every zoom, pan | `pdf-importer/src/editor/`, `pdf-importer/src/pdf/render.ts` |
 | Scale calibration from the drawing's written dimensions | `pdf-importer/src/calibrate/fit.ts` |
+| Calibration screen: dimensions marked on the drawing with snapping, the scale fitted and confirmed, free measuring to check; a permanent warning when the scale is not fully verified | `pdf-importer/src/editor/Calibrate.tsx`, `MeasureTool.tsx`, `snap.ts` |
 | Project data model and project-file schema (zod) | `pdf-importer/src/model/types.ts`, `schema.ts` |
 | Wall joints, room finding, gap closing up to 2 mm, room split, measurements, wall kind | `pdf-importer/src/model/geo.ts`, `join.ts`, `rooms.ts`, `measure.ts`, `kind.ts` |
 | One checked transition for every edit of the existing state: reasons for refusals, undo, and a lock that keeps the protected room (mamad) unchanged | `pdf-importer/src/model/apply.ts`, `existing.ts`, `rules.ts`, `history.ts` |
 | Finish layers (plaster or cladding) per wall side and free wall end; the room that is left after them (net against gross) | `pdf-importer/src/model/finish.ts` |
 | Project file (open, save, download) and an autosave draft in IndexedDB; an old draft is never deleted without asking | `pdf-importer/src/storage/` |
 
-Not built yet: calibration and editor screens, the save buttons, wall detection, the planned
-state, PDF output. Image-only (scanned) PDFs are out of scope.
+Not built yet: the editor screen, the save buttons, wall detection, the planned state, PDF
+output. Image-only (scanned) PDFs are out of scope.
 
 ## How it is developed
 
@@ -46,8 +47,8 @@ defects, for example a diagonal wall touching another only by a corner that left
 ## Tests
 
 `cd pdf-importer && npm ci && npm run verify`: typecheck, unit, edge, regression and browser tests
-(Chromium and Firefox), then `npm audit`. After the default locks were merged: 557 unit, 43 edge and
-202 browser tests pass; the 20 regression tests need private sample drawings and skip without them.
+(Chromium and Firefox), then `npm audit`. After the calibration screen was merged: 579 unit, 43 edge and
+248 browser tests pass; the 20 regression tests need private sample drawings and skip without them.
 
 ## Privacy
 
