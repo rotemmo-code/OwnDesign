@@ -52,4 +52,6 @@ button[aria-pressed='true'], .upload { color: var(--c-paper); background: var(--
 .frame svg.grab { cursor: grab; }
 .dim line, .dim rect, .snap, .aim { fill: none; stroke: var(--c-dimension); stroke-width: 1.5px; vector-effect: non-scaling-stroke; pointer-events: none; }
 .dim text { fill: var(--c-dimension); text-anchor: middle; font-family: inherit; pointer-events: none; }
+.halo .dim line, .halo .dim rect, .halo .snap { stroke: var(--c-paper); stroke-width: 4px; }
+.halo .dim text { fill: var(--c-paper); stroke: var(--c-paper); stroke-width: 3px; }
 .aim { stroke: var(--c-ink); }

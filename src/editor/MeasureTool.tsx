@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { fitCalibration } from '../calibrate/fit';
 import { copy } from '../copy';
 import { formatCm } from '../model/measure';
 import type { Plaster } from '../model/types';
@@ -31,7 +32,7 @@ export function useMeasure(index: SnapIndex, calibration: Calibration | null, pl
     panel: calibration && (
       <section aria-labelledby="measure-title">
         <h2 id="measure-title">{m.title}</h2>
-        <p>{calibration.verified ? m.verified(calibration.scale, calibration.dims.length) : m.unverified(calibration.scale)}</p>
+        <p>{calibration.verified ? m.verified(calibration.scale, fitCalibration(calibration.dims, calibration.chosen).used.filter(Boolean).length) : m.unverified(calibration.scale)}</p>
         <p>{m.how}</p>
         <p aria-live="polite" data-testid="measured">
           {cm && (

@@ -10,29 +10,43 @@ import { type Snap, type SnapIndex, snapPoint } from './snap';
 const c = copy.calibrate;
 const length = ([ax, ay]: Vec, [bx, by]: Vec) => Math.hypot(bx - ax, by - ay);
 const ACCEPTED = ['ok', 'ok-offset', 'other-standard', 'nonstandard'];
+/** After the number field or a cancel button goes, the keyboard goes on marking. */
+const backToDrawing = () => document.querySelector<SVGSVGElement>('svg[role="application"]')?.focus();
+
+/** Each shape twice: a paper-coloured outline under the turquoise one, so that it reads on a grey wall too (about 1.4 : 1 without). */
+const Haloed = ({ children }: { children: ReactNode }) => (
+  <>
+    <g className="halo">{children}</g>
+    <g className="ink">{children}</g>
+  </>
+);
 
 /** Where a click will land: a square on an end or a crossing, a circle on a line, a cross on nothing. k: view points per CSS pixel. */
 export function SnapMark({ snap: { at: [x, y], to }, k }: { snap: Snap; k: number }) {
   const r = 5 * k;
-  if (to === 'end' || to === 'cross') return <rect className="snap" x={x - r} y={y - r} width={2 * r} height={2 * r} />;
-  if (to === 'line') return <circle className="snap" cx={x} cy={y} r={r} />;
-  return <path className="snap" d={`M${x - r} ${y - r}L${x + r} ${y + r}M${x - r} ${y + r}L${x + r} ${y - r}`} />;
+  const shape =
+    to === 'end' || to === 'cross' ? <rect className="snap" x={x - r} y={y - r} width={2 * r} height={2 * r} />
+    : to === 'line' ? <circle className="snap" cx={x} cy={y} r={r} />
+    : <path className="snap" d={`M${x - r} ${y - r}L${x + r} ${y + r}M${x - r} ${y + r}L${x + r} ${y - r}`} />;
+  return <Haloed>{shape}</Haloed>;
 }
 
 /** A marked distance: the line, its ends, and a label above its middle. */
 export function DimLine({ a, b, k, label }: { a: Vec; b: Vec; k: number; label?: string }) {
   const r = 2.5 * k;
   return (
-    <g className="dim">
-      <line x1={a[0]} y1={a[1]} x2={b[0]} y2={b[1]} />
-      <rect x={a[0] - r} y={a[1] - r} width={2 * r} height={2 * r} />
-      <rect x={b[0] - r} y={b[1] - r} width={2 * r} height={2 * r} />
-      {label && (
-        <text x={(a[0] + b[0]) / 2} y={(a[1] + b[1]) / 2 - 6 * k} fontSize={14 * k}>
-          {label}
-        </text>
-      )}
-    </g>
+    <Haloed>
+      <g className="dim">
+        <line x1={a[0]} y1={a[1]} x2={b[0]} y2={b[1]} />
+        <rect x={a[0] - r} y={a[1] - r} width={2 * r} height={2 * r} />
+        <rect x={b[0] - r} y={b[1] - r} width={2 * r} height={2 * r} />
+        {label && (
+          <text x={(a[0] + b[0]) / 2} y={(a[1] + b[1]) / 2 - 6 * k} fontSize={14 * k}>
+            {label}
+          </text>
+        )}
+      </g>
+    </Haloed>
   );
 }
 
@@ -53,7 +67,11 @@ export function useCalibrate(index: SnapIndex, plaster: Plaster | null, onPlaste
     if (writtenMm === null || !draft?.b) return setWrong(true);
     setDims([...dims, { a: draft.a, b: draft.b, writtenMm }]);
     setDraft(null);
-    document.querySelector<SVGSVGElement>('svg[role="application"]')?.focus(); // the keyboard goes on marking
+    backToDrawing();
+  };
+  const cancel = () => {
+    setDraft(null);
+    backToDrawing();
   };
   const finish = (how: 'accept' | 'unverified') => {
     const calibration = calibrationOf(dims, chosen, how);
@@ -134,11 +152,11 @@ export function useCalibrate(index: SnapIndex, plaster: Plaster | null, onPlaste
               aria-invalid={wrong}
               aria-describedby="written-error"
               onChange={event => setText(event.target.value)}
-              onKeyDown={event => event.key === 'Escape' && setDraft(null)}
+              onKeyDown={event => event.key === 'Escape' && cancel()}
             />
           </label>
           <button type="submit">{c.add}</button>
-          <button type="button" onClick={() => setDraft(null)}>{c.cancel}</button>
+          <button type="button" onClick={cancel}>{c.cancel}</button>
           <p id="written-error" aria-live="assertive">{wrong ? c.badNumber : ''}</p>
         </form>
       ) : (
@@ -147,7 +165,7 @@ export function useCalibrate(index: SnapIndex, plaster: Plaster | null, onPlaste
           {draft && (
             <>
               {' '}
-              <button type="button" onClick={() => setDraft(null)}>{c.cancel}</button>
+              <button type="button" onClick={cancel}>{c.cancel}</button>
             </>
           )}
         </p>

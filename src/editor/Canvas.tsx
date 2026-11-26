@@ -39,6 +39,8 @@ export function Canvas({ page, pageNo, picture, draw, onPick, onHover, children 
   const [sharp, setSharp] = useState<Picture | null>(null);
   const [grab, setGrab] = useState(false); // space is down over the drawing
   const [keyed, setKeyed] = useState(false); // the keyboard moved the view last: show the point that Enter places
+  const [dragging, setDragging] = useState(false);
+  const pointer = useRef<{ clientX: number; clientY: number } | null>(null); // over the drawing, else null
   const space = useRef(false);
   const hovered = useRef(false);
   const tabbed = useRef<EventTarget | null>(null); // the control the keyboard moved the focus to
@@ -122,6 +124,11 @@ export function Canvas({ page, pageNo, picture, draw, onPick, onHover, children 
     }
   }
 
+  // The view moved under a pointer that did not: what a click there takes has changed, and the preview must show it, in the same frame.
+  useLayoutEffect(() => {
+    if (pointer.current && !held.current) onHover?.(pointAt(pointer.current), radius());
+  }, [view, size]);
+
   useEffect(() => {
     const part = visiblePart(view, size, page);
     if (!part) return;
@@ -138,7 +145,7 @@ export function Canvas({ page, pageNo, picture, draw, onPick, onHover, children 
         <svg
           ref={svg}
           data-testid="canvas"
-          className={grab ? 'grab' : undefined}
+          className={grab || dragging ? 'grab' : undefined}
           viewBox={view.join(' ')}
           role="application"
           aria-label={copy.drawing(pageNo)}
@@ -147,6 +154,7 @@ export function Canvas({ page, pageNo, picture, draw, onPick, onHover, children 
           onPointerEnter={() => (hovered.current = true)}
           onPointerLeave={() => {
             hovered.current = false;
+            pointer.current = null;
             onHover?.(null, 0);
           }}
           onPointerDown={event => {
@@ -155,13 +163,16 @@ export function Canvas({ page, pageNo, picture, draw, onPick, onHover, children 
             if (event.button === 0 && !space.current) return void (pressed.current = { x: event.clientX, y: event.clientY, at: pointAt(event) });
             event.preventDefault(); // the middle button would start the browser's own scrolling
             held.current = pointAt(event);
+            setDragging(true);
           }}
           onPointerMove={event => {
             setKeyed(false);
+            pointer.current = { clientX: event.clientX, clientY: event.clientY };
             const down = pressed.current;
             if (down && Math.hypot(event.clientX - down.x, event.clientY - down.y) >= CLICK_PX) {
               held.current = down.at; // the press becomes a drag of the point it began on
               pressed.current = null;
+              setDragging(true);
             }
             if (!held.current) return onHover?.(pointAt(event), radius());
             const [x, y] = pointAt(event);
@@ -170,8 +181,12 @@ export function Canvas({ page, pageNo, picture, draw, onPick, onHover, children 
           onPointerUp={() => {
             if (pressed.current) onPick?.(pressed.current.at, radius());
             held.current = pressed.current = null;
+            setDragging(false);
           }}
-          onPointerCancel={() => (held.current = pressed.current = null)}
+          onPointerCancel={() => {
+            held.current = pressed.current = null;
+            setDragging(false);
+          }}
           onKeyDown={event => {
             const step = event.shiftKey ? 100 : 10; // Shift moves a hundredth of the view
             const does: Partial<Record<string, () => void>> = {

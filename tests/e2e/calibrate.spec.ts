@@ -29,6 +29,7 @@ const viewBox = async (page: Page) => (await canvas(page).getAttribute('viewBox'
 /** As a designer does: the wheel zooms in over the point (about 3.7 times), then a click. */
 async function clickMm(page: Page, scale: number, mm: Vec, zoom = true) {
   if (zoom) {
+    await page.getByRole('button', { name: copy.fit }).click();
     await page.mouse.move(...(await onScreen(page, viewOf(scale, mm))));
     for (let i = 0; i < 6; i++) await page.mouse.wheel(0, -100);
     await expect.poll(async () => (await viewBox(page))[2]).toBeLessThan(250);
@@ -192,22 +193,32 @@ test('an 80 cm dimension stays listed as not used', async ({ page }) => {
   for (const mark of [DIMS.outer, DIMS.heightA, DIMS.roomB, DIMS.door]) await markMm(page, 50, mark);
   await expect(page.getByRole('list', { name: c.list }).getByRole('listitem').nth(3)).toHaveText(`${c.row(800, 800)} ${c.short}${c.remove}`);
   await expect(fitBox(page)).toHaveText(c.ok(50) + c.go(50));
+  await page.getByRole('button', { name: c.go(50) }).click();
+  await expect(measurePanel(page)).toContainText(m.verified(50, 3)); // the 80 cm one was not used
 });
 
-test('one 640: the button continues at 1:50 unverified; the warning stays wherever something is measured, until a verified recalibration', async ({ page }) => {
+test('one 640: the button continues at 1:50 unverified; the warning stays after measuring, zooming and during recalibration, until a verified scale replaces it', async ({ page }) => {
   await open(page);
   await markMm(page, 50, DIMS.outer);
   await expect(fitBox(page)).toHaveText(c.need.count + c.noMoreNote(50) + c.noMore);
   await page.getByRole('button', { name: c.noMore }).click();
   await expect(warning(page)).toBeVisible();
+  await expect(warning(page)).toHaveAttribute('aria-live', 'polite');
   await expect(measurePanel(page)).toContainText(m.unverified(50));
   expect(await measureMm(page, 50, [200, 2500], [3200, 2500])).toContain(m.result('300'));
+  await expect(warning(page)).toBeVisible();
   await page.getByRole('button', { name: copy.zoomIn }).click();
+  await page.mouse.move(...(await onScreen(page, [400, 300])));
+  await page.mouse.wheel(0, -300);
   await expect(warning(page)).toBeVisible();
   await page.getByRole('button', { name: m.again }).click();
   await expect(calibratePanel(page)).toBeVisible();
+  await expect(measurePanel(page)).toHaveCount(0); // nothing measures while recalibrating
+  await expect(warning(page)).toBeVisible(); // the unverified scale is still the one there is
   await expect(page.getByRole('list', { name: c.list }).getByRole('listitem')).toHaveCount(1); // the marks are kept
-  for (const mark of [DIMS.heightA, DIMS.roomB]) await markMm(page, 50, mark);
+  await markMm(page, 50, DIMS.heightA);
+  await expect(warning(page)).toBeVisible();
+  await markMm(page, 50, DIMS.roomB);
   await page.getByRole('button', { name: c.go(50) }).click();
   await expect(measurePanel(page)).toContainText(m.verified(50, 3));
   await expect(warning(page)).toHaveCount(0);
@@ -229,7 +240,9 @@ test('the left button drags; a click with a 3 px wobble places a point; the midd
   await page.mouse.move(x, y);
   await page.mouse.down();
   await page.mouse.move(x + 60, y + 40, { steps: 4 });
+  expect(await canvas(page).evaluate(svg => getComputedStyle(svg).cursor)).toBe('grab');
   await page.mouse.up();
+  expect(await canvas(page).evaluate(svg => getComputedStyle(svg).cursor)).toBe('crosshair');
   const dragged = await viewBox(page);
   expect(dragged[0]).toBeLessThan(before[0] - 30);
   await expect(status).toHaveText(c.first);
@@ -308,7 +321,7 @@ test('a new page and a new file start calibration afresh, without the warning', 
 
 test('the hover mark sits exactly on the crossing of a tick before the click, also when the whole page is shown', async ({ page }) => {
   await open(page);
-  const mark = canvas(page).locator('.snap');
+  const mark = canvas(page).locator('.ink .snap');
   const centre = () => mark.evaluate((r: SVGRectElement) => [r.x.baseVal.value + r.width.baseVal.value / 2, r.y.baseVal.value + r.height.baseVal.value / 2]);
   const [x, y] = viewOf(50, DIMS.roomA.a);
   for (const zoomed of [false, true]) {
@@ -320,6 +333,7 @@ test('the hover mark sits exactly on the crossing of a tick before the click, al
     await page.mouse.move(sx + 1, sy + 1); // across the tick, as a hand comes near
     await expect(mark).toHaveCount(1);
     expect(await mark.evaluate(element => element.tagName)).toBe('rect');
+    await expect(canvas(page).locator('.halo .snap')).toHaveCount(1); // a paper-coloured outline under it, so it reads on a grey wall
     const [cx, cy] = await centre();
     expect(cx, String(zoomed)).toBeCloseTo(x, 4);
     expect(cy, String(zoomed)).toBeCloseTo(y, 4);
@@ -328,12 +342,12 @@ test('the hover mark sits exactly on the crossing of a tick before the click, al
   await expect(mark).toHaveCount(0);
 });
 
-test('at 1280 px the panel is beside the drawing, at 390 px under it, with no sideways scroll; the drawing is not mirrored', async ({ page }) => {
-  for (const width of [1280, 390]) {
+test('at 1200 px the panel is beside the drawing, at 390 px under it, with no sideways scroll; the drawing is not mirrored', async ({ page }) => {
+  for (const width of [1200, 390]) {
     await open(page, dimsPdf(), width, 800);
     const frame = (await page.locator('.frame').boundingBox())!;
     const panel = (await calibratePanel(page).boundingBox())!;
-    if (width === 1280) expect(panel.x, 'beside').toBeGreaterThanOrEqual(frame.x + frame.width - 1);
+    if (width === 1200) expect(panel.x, 'beside').toBeGreaterThanOrEqual(frame.x + frame.width - 1);
     else expect(panel.y, 'under').toBeGreaterThan(frame.y + frame.height);
     expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth), String(width)).toBe(0);
     const [left] = await onScreen(page, viewOf(50, DIMS.outer.a));
@@ -355,6 +369,69 @@ test('the plaster answer changes the sentence next to the measurement and not th
   await page.getByRole('button', { name: c.go(50) }).click();
   expect(await measureMm(page, 50, [200, 2500], [3200, 2500])).toContain(m.result('300'));
   await expect(measurePanel(page)).toContainText(copy.plasterSentence.inWall);
+});
+
+test('marking at whole-page size without zooming, on the exact marks, verifies at 1:50', async ({ page }) => {
+  await open(page);
+  for (const mark of [DIMS.outer, DIMS.heightA, DIMS.roomB]) {
+    expect(await viewBox(page)).toEqual([0, 0, 842, 595]);
+    await clickMm(page, 50, mark.a, false);
+    await clickMm(page, 50, mark.b, false);
+    await field(page).fill(mark.text);
+    await field(page).press('Enter');
+  }
+  await expect(fitBox(page)).toHaveText(c.ok(50) + c.go(50));
+});
+
+test('the preview always shows what a click takes: after the wheel, a zoom button and an arrow key, without a pointer move', async ({ page }) => {
+  await open(page);
+  const preview = canvas(page).locator('.ink .snap');
+  const placed = canvas(page).locator('.ink .dim rect').first();
+  const centre = (shape: typeof preview) =>
+    shape.evaluate((element: SVGGraphicsElement) => {
+      const { x, y, width, height } = element.getBBox();
+      return [x + width / 2, y + height / 2];
+    });
+  const [x, y] = await onScreen(page, viewOf(50, DIMS.roomA.a));
+  await page.mouse.move(x + 5, y);
+  expect(await preview.evaluate(element => element.tagName)).toBe('rect'); // an end or a crossing of the mark
+  const changes: [string, () => Promise<unknown>][] = [
+    ['wheel', async () => { for (let i = 0; i < 4; i++) await page.mouse.wheel(0, -100); }],
+    ['zoom button', async () => { await page.getByRole('button', { name: copy.zoomIn }).focus(); await page.keyboard.press('Enter'); }],
+    ['arrow key', async () => { await canvas(page).focus(); await page.keyboard.press('Shift+ArrowRight'); }],
+  ];
+  for (const [name, change] of changes) {
+    const view = await viewBox(page);
+    await change();
+    await expect.poll(() => viewBox(page), name).not.toEqual(view);
+    await expect.poll(() => centre(preview), name).not.toEqual([]);
+    const shown = await centre(preview);
+    await page.mouse.down();
+    await page.mouse.up();
+    const took = await centre(placed);
+    expect(took[0], name).toBeCloseTo(shown[0], 3); // getBBox is single precision; a stale preview was 4 pt off
+    expect(took[1], name).toBeCloseTo(shown[1], 3);
+    await calibratePanel(page).getByRole('button', { name: c.cancel }).focus();
+    await page.keyboard.press('Enter');
+    await expect(placed, name).toHaveCount(0);
+  }
+});
+
+test('Escape and both cancel buttons give the focus back to the drawing', async ({ page }) => {
+  await open(page);
+  const [x, y] = await onScreen(page, [400, 300]);
+  await page.mouse.click(x, y);
+  await calibratePanel(page).getByRole('button', { name: c.cancel }).click();
+  await expect(canvas(page)).toBeFocused();
+  for (const how of ['Escape', 'cancel'] as const) {
+    await page.mouse.click(x, y);
+    await page.mouse.click(x + 40, y);
+    await expect(field(page)).toBeFocused();
+    if (how === 'Escape') await page.keyboard.press('Escape');
+    else await calibratePanel(page).getByRole('button', { name: c.cancel }).click();
+    await expect(field(page), how).toHaveCount(0);
+    await expect(canvas(page), how).toBeFocused();
+  }
 });
 
 describeSamples('samples', () => {

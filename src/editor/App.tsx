@@ -112,7 +112,7 @@ export function App() {
       </header>
       <p role="status">{busy ? copy.opening : pages.length > 0 && !shown && !problem ? copy.whichPage(pages.length) : ''}</p>
       <p role="alert">{problem}</p>
-      {calibration && !calibration.verified && <p className="unverified">{copy.unverified}</p>}
+      {calibration && !calibration.verified && <p className="unverified" aria-live="polite">{copy.unverified}</p>}
       {/* ltr: the drawing never mirrors with the RTL page */}
       <div dir="ltr" data-testid="drawing" ref={drawing}>
         {shown && (
@@ -127,7 +127,7 @@ type WorkProps = {
   shown: Shown;
   draw: (...part: Parameters<PdfSession['draw']>) => Promise<Picture | null>;
   calibration: Calibration | null;
-  onCalibration: (calibration: Calibration | null) => void;
+  onCalibration: (calibration: Calibration) => void;
   plaster: Plaster | null;
   onPlaster: (answer: Plaster) => void;
 };
@@ -135,9 +135,14 @@ type WorkProps = {
 /** The page with the tool of the moment: calibration until a scale is accepted, then measuring. */
 function Work({ shown: { page, pageNo, picture }, draw, calibration, onCalibration, plaster, onPlaster }: WorkProps) {
   const index = useMemo(() => snapIndex(page), [page]);
-  const calibrate = useCalibrate(index, plaster, onPlaster, onCalibration);
-  const measure = useMeasure(index, calibration, plaster, () => onCalibration(null));
-  const tool = calibration ? measure : calibrate;
+  // While recalibrating, the calibration there is stays (and with it the warning) until a new one replaces it; nothing measures meanwhile.
+  const [again, setAgain] = useState(false);
+  const calibrate = useCalibrate(index, plaster, onPlaster, next => {
+    setAgain(false);
+    onCalibration(next);
+  });
+  const measure = useMeasure(index, calibration, plaster, () => setAgain(true));
+  const tool = calibration && !again ? measure : calibrate;
   return (
     <>
       <Canvas page={page} pageNo={pageNo} picture={picture} draw={draw} onPick={tool.pick} onHover={tool.hover}>
