@@ -36,8 +36,11 @@ class FilterFactory {
   addKnockoutFilter = none;
   destroy() {}
 }
-/** What a document that is drawn is opened with, besides the options of one that is read. */
-export const DRAWING = { maxImageSize: MAX_IMAGE_PIXELS, CanvasFactory, FilterFactory };
+/**
+ * What a document that is drawn is opened with, besides the options of one that is read. It is drawn on this thread: on pdf.js's
+ * own renderer worker the operators would be sent away before operationsFilter could mend them.
+ */
+export const DRAWING = { maxImageSize: MAX_IMAGE_PIXELS, CanvasFactory, FilterFactory, disableWorkerRendering: true };
 
 const EVERYWHERE = Float32Array.of(-1e9, -1e9, 1e9, 1e9); // a path's box that meets every clip
 

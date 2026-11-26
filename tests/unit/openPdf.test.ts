@@ -133,6 +133,23 @@ it('a buffer that cannot be sent is failed', async () => {
   expect(vi.getTimerCount()).toBe(0);
 });
 
+it('an abort ends the worker at once, also while it is still opening', async () => {
+  const stop = new AbortController();
+  const opening = openPdf(new ArrayBuffer(8), stop.signal);
+  stop.abort();
+  expect(await opening).toEqual({ ok: false, code: 'failed' });
+  expect(StubWorker.last.terminated).toBe(1);
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+it('a signal that was aborted before the call ends the worker at once (the next file came while this one was still being read)', async () => {
+  const stop = new AbortController();
+  stop.abort();
+  expect(await openPdf(new ArrayBuffer(8), stop.signal)).toEqual({ ok: false, code: 'failed' });
+  expect(StubWorker.last.terminated).toBe(1);
+  expect(vi.getTimerCount()).toBe(0);
+});
+
 it('a refusal ends the worker', async () => {
   const opening = openPdf(new ArrayBuffer(8));
   const worker = StubWorker.last;

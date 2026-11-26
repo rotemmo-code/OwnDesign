@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { moved, visiblePart, whole, zoomed } from '../../src/editor/view';
+import { moved, visiblePart, wheelFactor, whole, zoomed } from '../../src/editor/view';
 
 const PAGE = { widthPt: 842, heightPt: 595 };
 const near = (got: readonly number[] | undefined, want: number[]) => {
@@ -40,4 +40,13 @@ it('the visible part ends on whole screen pixels', () => {
 
 it('nothing of the page is on the screen', () => {
   for (const view of [[842, 0, 842, 595], [-842, 0, 842, 595], [0, 595, 842, 595], [0, -595, 842, 595]] as [number, number, number, number][]) expect(visiblePart(view, [842, 595], PAGE)).toBeNull();
+});
+
+it('one notch of the wheel is one step, in pixels, in lines or in pages', () => {
+  expect(wheelFactor({ deltaY: -100, deltaMode: 0 })).toBeCloseTo(Math.exp(0.22), 9); // Chromium
+  expect(wheelFactor({ deltaY: -3, deltaMode: 1 })).toBeCloseTo(Math.exp(0.22), 9); // Firefox: three lines
+  expect(wheelFactor({ deltaY: 1, deltaMode: 2 })).toBeCloseTo(Math.exp(-0.22), 9); // a page: no more than a notch
+  expect(wheelFactor({ deltaY: -1000, deltaMode: 0 })).toBeCloseTo(Math.exp(0.22), 9);
+  expect(wheelFactor({ deltaY: 10, deltaMode: 0 })).toBeCloseTo(Math.exp(-0.022), 9); // a touchpad, a little at a time
+  expect(wheelFactor({ deltaY: 0, deltaMode: 0 })).toBe(1);
 });

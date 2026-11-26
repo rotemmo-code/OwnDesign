@@ -1,7 +1,9 @@
 import type { PDFDocumentLoadingTask, PDFDocumentProxy } from 'pdfjs-dist';
 import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { describe, expect, it, vi } from 'vitest';
+import { MAX_IMAGE_PIXELS } from '../../src/limits';
 import { extractPage, openDocument, summariseColours, type PathItem } from '../../src/pdf/extract';
+import { DRAWING } from '../../src/pdf/render';
 import type { Vec } from '../../src/shared';
 import { bytes, encryptedPdf, onePage, ticks, truncated } from '../fixtures/hostile';
 import { planPdf } from '../fixtures/makePdf';
@@ -604,4 +606,10 @@ describe('colours', () => {
     expect(hexes([['#ff0000', 2], ['#ff5959', 1]])).toEqual(['#ff0000']); // 0.349
     expect(hexes([['#ff0000', 2], ['#ff5a5a', 1]])).toEqual(['#ff0000', '#ff5a5a']); // 0.353
   });
+});
+
+it('a document that is drawn decodes its images up to MAX_IMAGE_PIXELS and is drawn on this thread', () => {
+  // On pdf.js's own renderer worker the operators would be sent away before operationsFilter could mend them.
+  expect(DRAWING).toMatchObject({ maxImageSize: MAX_IMAGE_PIXELS, disableWorkerRendering: true });
+  expect(Object.keys(DRAWING).sort()).toEqual(['CanvasFactory', 'FilterFactory', 'disableWorkerRendering', 'maxImageSize']);
 });

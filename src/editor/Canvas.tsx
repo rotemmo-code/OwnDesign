@@ -1,12 +1,15 @@
-import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { type ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { copy } from '../copy';
 import type { ExtractedPage } from '../pdf/extract';
 import type { Box, Picture } from '../pdf/render';
 import type { Vec } from '../shared';
-import { layout, moved, type Size, visiblePart, whole, zoomed } from './view';
+import { layout, moved, type Size, visiblePart, wheelFactor, whole, zoomed } from './view';
 
 const NOTCH = 1.25; // one zoom step
 const REST_MS = 120; // without a change before the picture is drawn again
+
+/** What a redraw covers. */
+type Part = { box: Box; scale: number };
 
 type Props = {
   page: ExtractedPage;
@@ -24,8 +27,12 @@ export function Canvas({ page, pageNo, picture, draw, children }: Props) {
   const [view, setView] = useState<Box>(() => whole(page));
   const [size, setSize] = useState<Size>([1, 1]);
   const [sharp, setSharp] = useState<Picture | null>(null);
-  const [space, setSpace] = useState(false);
+  const [grab, setGrab] = useState(false); // space is down over the drawing
+  const space = useRef(false);
+  const hovered = useRef(false);
   const held = useRef<Vec | null>(null); // the point of the page under the pointer, while it is dragged
+  // One redraw at a time, and then only of the newest view: a slow page takes seconds for each.
+  const queue = useRef<{ busy: boolean; next: Part | null; gone: boolean }>({ busy: false, next: null, gone: false });
 
   const pointAt = (event: { clientX: number; clientY: number }): Vec => {
     const { x, y } = new DOMPoint(event.clientX, event.clientY).matrixTransform(svg.current!.getScreenCTM()!.inverse());
@@ -40,7 +47,11 @@ export function Canvas({ page, pageNo, picture, draw, children }: Props) {
       setSize([width * devicePixelRatio, height * devicePixelRatio]);
     };
     const observer = new ResizeObserver(measure);
-    observer.observe(frame.current!);
+    try {
+      observer.observe(frame.current!, { box: 'device-pixel-content-box' }); // also when the window moves to a screen of another density
+    } catch {
+      observer.observe(frame.current!);
+    }
     measure();
     return () => observer.disconnect();
   }, []);
@@ -51,28 +62,49 @@ export function Canvas({ page, pageNo, picture, draw, children }: Props) {
     const wheel = (event: WheelEvent) => {
       event.preventDefault(); // else Ctrl and the wheel zoom the whole window; React listens too passively for this
       const at = pointAt(event);
-      const factor = Math.exp(-Math.max(-100, Math.min(100, event.deltaY)) * 0.0022);
+      const factor = wheelFactor(event);
       setView(old => zoomed(old, page, at, factor));
     };
+    // Space is heard wherever the focus is, so that it drags right after a button was used, and presses no button over the drawing.
+    const keys = (event: KeyboardEvent) => {
+      if (event.key !== ' ' || (event.type === 'keydown' ? !hovered.current : !space.current)) return;
+      event.preventDefault();
+      setGrab((space.current = event.type === 'keydown'));
+    };
+    const away = () => setGrab((space.current = false));
     element.addEventListener('wheel', wheel, { passive: false });
-    return () => element.removeEventListener('wheel', wheel);
+    addEventListener('keydown', keys);
+    addEventListener('keyup', keys);
+    addEventListener('blur', away);
+    return () => {
+      element.removeEventListener('wheel', wheel);
+      removeEventListener('keydown', keys);
+      removeEventListener('keyup', keys);
+      removeEventListener('blur', away);
+      queue.current.gone = true;
+    };
   }, []);
+
+  async function sharpen(part: Part) {
+    const wait = queue.current;
+    wait.next = part;
+    if (wait.busy) return;
+    wait.busy = true;
+    for (let todo: Part | null = part; todo && !wait.gone; todo = wait.next) {
+      wait.next = null;
+      const drawn = await draw(todo.box, todo.scale);
+      if (drawn && wait.gone) drawn.bitmap.close();
+      else if (drawn) setSharp(drawn);
+    }
+    wait.busy = false;
+  }
 
   useEffect(() => {
     const part = visiblePart(view, size, page);
     if (!part) return;
-    let stale = false;
-    const timer = setTimeout(async () => {
-      const drawn = await draw(part.box, part.scale);
-      if (stale) drawn?.bitmap.close();
-      else if (drawn) setSharp(drawn);
-    }, REST_MS);
-    return () => {
-      stale = true;
-      clearTimeout(timer);
-    };
+    const timer = setTimeout(() => void sharpen(part), REST_MS);
+    return () => clearTimeout(timer);
   }, [view, size]);
-  useEffect(() => () => sharp?.bitmap.close(), [sharp]);
 
   return (
     <>
@@ -82,14 +114,16 @@ export function Canvas({ page, pageNo, picture, draw, children }: Props) {
         <svg
           ref={svg}
           data-testid="canvas"
-          className={space ? 'grab' : undefined}
+          className={grab ? 'grab' : undefined}
           viewBox={view.join(' ')}
           role="application"
           aria-label={copy.drawing(pageNo)}
           aria-describedby="canvas-help"
           tabIndex={0}
+          onPointerEnter={() => (hovered.current = true)}
+          onPointerLeave={() => (hovered.current = false)}
           onPointerDown={event => {
-            if (event.button !== 1 && !(event.button === 0 && space)) return;
+            if (event.button !== 1 && !(event.button === 0 && space.current)) return;
             event.preventDefault();
             event.currentTarget.setPointerCapture(event.pointerId);
             held.current = pointAt(event);
@@ -103,7 +137,6 @@ export function Canvas({ page, pageNo, picture, draw, children }: Props) {
           onPointerCancel={() => (held.current = null)}
           onKeyDown={event => {
             const does: Partial<Record<string, () => void>> = {
-              ' ': () => setSpace(true),
               '+': () => zoom(NOTCH),
               '=': () => zoom(NOTCH),
               '-': () => zoom(1 / NOTCH),
@@ -118,8 +151,6 @@ export function Canvas({ page, pageNo, picture, draw, children }: Props) {
             event.preventDefault();
             act();
           }}
-          onKeyUp={event => event.key === ' ' && setSpace(false)}
-          onBlur={() => setSpace(false)}
         >
           <rect className="edge" width={page.widthPt} height={page.heightPt} />
           <g data-testid="overlay">{children}</g>
@@ -137,16 +168,22 @@ export function Canvas({ page, pageNo, picture, draw, children }: Props) {
   );
 }
 
-/** A picture of the page, in its place under the svg whatever the view has become since it was drawn. */
+/**
+ * A picture of the page, in its place under the svg whatever the view has become since it was drawn. The canvas takes the bitmap over:
+ * one copy in memory, freed with the canvas or with the next picture. So a picture can be shown once only.
+ */
 function PagePicture({ picture: { bitmap, box }, view, size }: { picture: Picture; view: Box; size: Size }) {
   const canvas = useRef<HTMLCanvasElement>(null);
+  const [width, height] = useMemo(() => [bitmap.width, bitmap.height], [bitmap]); // a bitmap that was taken over has no size
   useLayoutEffect(() => {
-    Object.assign(canvas.current!, { width: bitmap.width, height: bitmap.height });
-    canvas.current!.getContext('2d')!.drawImage(bitmap, 0, 0);
+    Object.assign(canvas.current!, { width, height }); // the bitmap does not set them
+    const context = canvas.current!.getContext('bitmaprenderer')!;
+    context.transferFromImageBitmap(bitmap);
+    return () => context.transferFromImageBitmap(null);
   }, [bitmap]);
   const { scale, originX, originY } = layout(view, size);
   // A transform, because left, top, width and height are rounded to whole CSS pixels.
   const css = (pixels: number) => pixels / devicePixelRatio;
-  const transform = `translate(${css(originX + box[0] * scale)}px, ${css(originY + box[1] * scale)}px) scale(${css((box[2] * scale) / bitmap.width)}, ${css((box[3] * scale) / bitmap.height)})`;
+  const transform = `translate(${css(originX + box[0] * scale)}px, ${css(originY + box[1] * scale)}px) scale(${css((box[2] * scale) / width)}, ${css((box[3] * scale) / height)})`;
   return <canvas ref={canvas} style={{ transform }} data-box={box.join(' ')} aria-hidden="true" />;
 }

@@ -19,9 +19,12 @@ export function App() {
   const [problem, setProblem] = useState('');
   const drawing = useRef<HTMLDivElement>(null);
   const turn = useRef(0); // of the last file or page asked for; the answer to an earlier one is dropped
+  const opening = useRef<AbortController | null>(null); // ends the file before, even while it is still opening
 
   async function open(file: File) {
     const mine = ++turn.current;
+    opening.current?.abort();
+    const stop = (opening.current = new AbortController());
     session?.close();
     setSession(null);
     setShown(null);
@@ -29,7 +32,7 @@ export function App() {
     setFileName(file.name);
     setBusy(true);
     let opened: Opened = { ok: false, code: 'too-large' };
-    if (file.size <= MAX_FILE_BYTES) opened = await file.arrayBuffer().then(openPdf).catch(() => ({ ok: false, code: 'failed' }));
+    if (file.size <= MAX_FILE_BYTES) opened = await file.arrayBuffer().then(bytes => openPdf(bytes, stop.signal)).catch(() => ({ ok: false, code: 'failed' }));
     if (mine !== turn.current) {
       if (opened.ok) opened.session.close();
       return;
@@ -47,11 +50,17 @@ export function App() {
     setBusy(true);
     const { clientWidth, clientHeight } = drawing.current!;
     const read = await from.show(pageNo, Math.max(1, clientWidth * devicePixelRatio), Math.max(1, clientHeight * devicePixelRatio));
-    if (mine !== turn.current) return;
+    if (mine !== turn.current) {
+      if (read.ok) read.picture.bitmap.close(); // no longer wanted
+      return;
+    }
     setBusy(false);
     if (read.ok) return setShown({ pageNo, page: read.page, picture: read.picture });
     setProblem(copy.refused[read.code]);
-    if (read.code === 'timeout' || read.code === 'failed') setSession(null); // the reader is gone
+    if (read.code === 'timeout' || read.code === 'failed') {
+      from.close(); // nothing more is asked of this reader
+      setSession(null);
+    }
   }
 
   async function draw(...part: Parameters<PdfSession['draw']>) {

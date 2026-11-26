@@ -8,6 +8,13 @@ export type Size = [width: number, height: number];
 
 const CLOSEST = 1 / 64; // of the page's width
 const FURTHEST = 2;
+const NOTCH_PIXELS = 100; // one notch of the wheel in Chromium; Firefox counts the same notch as 3 lines
+
+/** How much one wheel event zooms: a notch is one step however the browser counts it, and a touchpad's small moves zoom a little. */
+export function wheelFactor({ deltaMode, deltaY }: { deltaMode: number; deltaY: number }): number {
+  const pixels = deltaY * ([1, NOTCH_PIXELS / 3, NOTCH_PIXELS][deltaMode] ?? 1); // read deltaMode first: Firefox then gives lines
+  return Math.exp(-Math.max(-NOTCH_PIXELS, Math.min(NOTCH_PIXELS, pixels)) * 0.0022);
+}
 
 export const whole = (page: Page): Box => [0, 0, page.widthPt, page.heightPt];
 export const moved = ([x, y, width, height]: Box, [dx, dy]: Vec): Box => [x + dx, y + dy, width, height];

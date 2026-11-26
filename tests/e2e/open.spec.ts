@@ -5,6 +5,7 @@ import { MAX_FILE_BYTES, MAX_IMAGE_PIXELS, TIMEOUT_MS } from '../../src/limits';
 import { COLOR, contrast } from '../../src/theme';
 import { bytes, encryptedPdf, imageOnly, jsAction, manyPaths, onePage, ticks, truncated } from '../fixtures/hostile';
 import { planPdf } from '../fixtures/makePdf';
+import { visiblePart } from '../../src/editor/view';
 import { COLOURS, coloured, special, twoPages, withImage } from '../fixtures/view';
 import { describeSamples, type SampleId, samplePage, samplePath } from '../samples';
 
@@ -54,6 +55,37 @@ async function pixels(page: Page, x: number, y: number, count = 1) {
   }, [...png]);
 }
 const pixel = async (page: Page, x: number, y: number) => (await pixels(page, x, y))[0];
+/** 99,000 long strokes: a page that takes seconds to draw, and is still accepted. */
+const SLOW = Array.from({ length: 99_000 }, (_, i) => `${i % 600} 0 m ${600 - (i % 600)} 400 l S`).join('\n');
+
+type Spy = { sent: string[]; got: ImageBitmap[] };
+/** Records what is asked of a reader and every picture that comes back. failing: which answers turn into failed (after the first picture, for redraws). */
+const spy = (page: Page, failing?: 'pages' | 'redraws') =>
+  page.addInitScript(failing => {
+    const spied: Spy = { sent: [], got: [] };
+    Object.assign(window, { spied });
+    const fails = ({ result }: { result?: { page?: object; picture?: object } }) =>
+      failing === 'pages' ? !!result?.page : failing === 'redraws' && !!result?.picture && !result.page && spied.got.length > 2;
+    const onmessage = Object.getOwnPropertyDescriptor(Worker.prototype, 'onmessage')!;
+    Object.defineProperty(Worker.prototype, 'onmessage', {
+      set(listen: (event: MessageEvent) => void) {
+        onmessage.set!.call(this, (event: MessageEvent) => {
+          const bitmap = event.data?.result?.picture?.bitmap;
+          if (bitmap) spied.got.push(bitmap);
+          listen(fails(event.data) ? ({ data: { id: event.data.id, result: { ok: false, code: 'failed' } } } as MessageEvent) : event);
+        });
+      },
+      get() {
+        return onmessage.get!.call(this);
+      },
+    });
+    const post = Worker.prototype.postMessage;
+    Worker.prototype.postMessage = function (this: Worker, message: object, options?: StructuredSerializeOptions) {
+      spied.sent.push(['box', 'page', 'open'].find(kind => kind in message)!);
+      return post.call(this, message, options);
+    } as typeof post;
+  }, failing);
+const spied = (page: Page) => page.evaluate(() => (window as unknown as { spied: Spy }).spied.got.filter(bitmap => bitmap.width > 0).length);
 
 test('opens the fixture and shows the page', async ({ page }) => {
   await open(page, planPdf({ layers: true }));
@@ -130,8 +162,17 @@ test('the wheel zooms about the cursor, between 2 pages wide and a 64th of one',
   }
 });
 
+test('a wheel that counts in lines zooms as far per notch as one that counts in pixels', async ({ page }) => {
+  await open(page, planPdf());
+  const at = await onScreen(page, 300, 150);
+  await canvas(page).dispatchEvent('wheel', { deltaY: -3, deltaMode: 1, clientX: at.x, clientY: at.y }); // Firefox, one notch
+  await expect.poll(async () => (await viewBox(page))[2]).toBeCloseTo(842 / Math.exp(0.22), 3);
+});
+
 test('the browser keeps its own zoom out of the drawing and its own keys', async ({ page }) => {
   await open(page, planPdf());
+  const middle = await onScreen(page, 421, 297.5);
+  await page.mouse.move(middle.x, middle.y); // space is taken over the drawing only
   const taken = (type: 'wheel' | 'keydown', init: object) =>
     canvas(page).evaluate((svg, [type, init]) => !svg.dispatchEvent(new (type === 'wheel' ? WheelEvent : KeyboardEvent)(type as string, { bubbles: true, cancelable: true, ...(init as object) })), [type, init] as const);
   expect(await taken('wheel', { deltaY: 100, ctrlKey: true, clientX: 300, clientY: 300 })).toBe(true);
@@ -183,6 +224,29 @@ test('drags with the middle button, or with space and the left one; the left one
   expect(await viewBox(page)).toEqual(still);
 });
 
+test('space drags wherever the focus is, and over the drawing it presses no button', async ({ page }) => {
+  await open(page, planPdf());
+  const zoomIn = page.getByRole('button', { name: copy.zoomIn });
+  await zoomIn.click(); // the focus is on the button now
+  const middle = await onScreen(page, 421, 297.5);
+  await page.mouse.move(middle.x, middle.y);
+  const view = await viewBox(page);
+  await page.keyboard.down(' ');
+  await page.mouse.down();
+  await page.mouse.move(middle.x + 80, middle.y + 40, { steps: 4 });
+  await page.mouse.up();
+  await page.keyboard.up(' ');
+  const moved = await viewBox(page);
+  expect(moved[2]).toBeCloseTo(view[2], 6); // the button was not pressed
+  expect(moved[0]).toBeLessThan(view[0] - 30); // the page went right with the pointer
+  await page.keyboard.press(' '); // a tap over the drawing does nothing either
+  expect(await viewBox(page)).toEqual(moved);
+  await page.mouse.move(5, 5); // away from the drawing, space presses the focused button as always
+  await zoomIn.focus();
+  await page.keyboard.press(' ');
+  await expect.poll(async () => (await viewBox(page))[2]).toBeCloseTo(moved[2] / 1.25, 6);
+});
+
 test('the keyboard and the buttons zoom and move too', async ({ page }) => {
   await open(page, planPdf());
   await expect(canvas(page)).toBeFocused();
@@ -232,6 +296,74 @@ test('two pages asked for quickly: only the second ever shows', async ({ page })
   await page.getByRole('button', { name: copy.page(2) }).click();
   await expect(page.getByRole('application', { name: copy.drawing(2) })).toBeVisible({ timeout: 15_000 });
   expect(await page.evaluate(() => (window as unknown as { seen: number }).seen)).toBe(0);
+});
+
+test('zoom steps on a slow page: one redraw at a time, of the newest view; the reader lives, the next page opens and the view that waited is not drawn', async ({ page }) => {
+  test.setTimeout(120_000);
+  await spy(page);
+  await page.goto('/');
+  await upload(page, twoPages(SLOW));
+  await page.getByRole('button', { name: copy.page(1) }).click();
+  await expect(pictures(page)).toHaveCount(2, { timeout: 60_000 });
+  const asked = () => page.evaluate(() => (window as unknown as { spied: Spy }).spied.sent);
+  const answered = () => page.evaluate(() => (window as unknown as { spied: Spy }).spied.got.length);
+  const redraws = async () => (await asked()).filter(kind => kind === 'box').length;
+  const before = await redraws();
+  for (let i = 0; i < 24; i++) {
+    await page.keyboard.press(i < 16 ? '+' : '-');
+    await page.waitForTimeout(160); // more than the rest before a redraw
+  }
+  expect((await redraws()) - before).toBeLessThanOrEqual(4); // not 24: one is drawn, only the newest view waits
+  const size = await page.locator('.frame').evaluate(frame => [frame.getBoundingClientRect().width * devicePixelRatio, frame.getBoundingClientRect().height * devicePixelRatio] as [number, number]);
+  const newest = visiblePart((await viewBox(page)) as [number, number, number, number], size, { widthPt: 600, heightPt: 400 })!;
+  await expect(pictures(page).last()).toHaveAttribute('data-box', newest.box.join(' '), { timeout: 30_000 });
+  await expect(alert(page)).toHaveText('');
+  expect(page.workers()).toHaveLength(1);
+  const drawing = await redraws();
+  const pictureCount = await answered();
+  await page.keyboard.press('+');
+  await expect.poll(redraws).toBe(drawing + 1); // drawn now, for seconds
+  await page.keyboard.press('+');
+  await page.waitForTimeout(400); // this view waits behind it
+  expect(await answered()).toBe(pictureCount); // still drawing
+  await page.getByRole('button', { name: copy.page(2) }).click();
+  await sharp(page);
+  await expect.poll(answered, { timeout: 30_000 }).toBeGreaterThanOrEqual(pictureCount + 3); // the redraw that was drawing, then page 2 whole and sharp
+  await page.waitForTimeout(300);
+  const sent = await asked();
+  expect(sent.slice(sent.lastIndexOf('page') + 1)).toEqual(['box']); // page 2's own redraw, not the view of page 1 that waited
+  expect(await pixel(page, 150, 450)).toBe('#0000ff');
+});
+
+test('a page answered with failed ends its reader', async ({ page }) => {
+  await spy(page, 'pages');
+  await page.goto('/');
+  await upload(page, twoPages());
+  await expect.poll(() => page.workers().length).toBe(1);
+  await page.getByRole('button', { name: copy.page(1) }).click();
+  await expect(alert(page)).toHaveText(copy.refused.failed);
+  await expect.poll(() => page.workers().length).toBe(0);
+  await expect(page.getByRole('button', { name: copy.page(2) })).toHaveCount(0);
+});
+
+test('every picture that comes back is on the screen or closed: page changes, a page asked for before another, a new file', async ({ page }) => {
+  test.setTimeout(60_000);
+  await spy(page);
+  await page.goto('/');
+  await upload(page, twoPages());
+  for (const n of [1, 2, 1, 2]) {
+    await page.getByRole('button', { name: copy.page(n) }).click();
+    await sharp(page);
+    await redrawn(page, () => page.keyboard.press('+'));
+  }
+  await upload(page, twoPages(SLOW));
+  await page.getByRole('button', { name: copy.page(1) }).click();
+  await page.getByRole('button', { name: copy.page(2) }).click(); // page 1 comes when it is no longer wanted
+  await sharp(page);
+  await upload(page, planPdf());
+  await sharp(page);
+  await expect.poll(() => spied(page)).toBe(0); // the two on the screen belong to their canvases now
+  expect(await page.evaluate(() => (window as unknown as { spied: Spy }).spied.got.length)).toBeGreaterThanOrEqual(14);
 });
 
 test('a page that is refused leaves the other pages to choose', async ({ page }) => {
@@ -327,7 +459,16 @@ test('a missing reader is said to have failed', async ({ page }) => {
   await expect(alert(page)).toHaveText(copy.refused.failed);
 });
 
-test('a drawing that hangs or fails while zooming keeps the page and says so', async ({ page }) => {
+test('a redraw that fails keeps the page and says so', async ({ page }) => {
+  await spy(page, 'redraws');
+  await open(page, planPdf());
+  await page.keyboard.press('+');
+  await expect(alert(page)).toHaveText(copy.notSharper);
+  await expect(canvas(page)).toBeVisible();
+  await expect(pictures(page)).toHaveCount(2);
+});
+
+test('a redraw that hangs keeps the page and says so', async ({ page }) => {
   await open(page, planPdf());
   await page.clock.install();
   await page.evaluate(() => {
@@ -339,20 +480,22 @@ test('a drawing that hangs or fails while zooming keeps the page and says so', a
   await expect(canvas(page)).toBeVisible();
 });
 
-test('a second file while the first is opening: only the second is shown', async ({ page }) => {
+test('a second file ends the first one at once, also while the first is still opening', async ({ page }) => {
+  await page.route(READER, route => route.fulfill({ contentType: 'text/javascript', body: 'onmessage = () => {};' }), { times: 1 }); // the first reader never answers
   await page.goto('/');
-  await upload(page, manyPaths(100_000), 'first.pdf');
+  await upload(page, planPdf(), 'first.pdf');
+  await expect(page.getByRole('status')).toHaveText(copy.opening);
+  await expect.poll(() => page.workers().length).toBe(1);
   await upload(page, twoPages(), 'second.pdf');
   await page.getByRole('button', { name: copy.page(1) }).click();
   await page.getByRole('button', { name: copy.page(2) }).click();
   await sharp(page);
-  await page.waitForTimeout(1500);
+  await expect.poll(() => page.workers().length, { timeout: 2000 }).toBe(1); // the first reader is gone, long before its own 30 s
   expect(await viewBox(page)).toEqual([0, 0, 400, 600]);
   await expect(page.getByText('first.pdf')).toHaveCount(0);
-  expect(page.workers()).toHaveLength(1); // the first one's reader is gone
   await upload(page, planPdf());
   await expect.poll(() => viewBox(page)).toEqual([0, 0, 842, 595]);
-  expect(page.workers()).toHaveLength(1);
+  await expect.poll(() => page.workers().length, { timeout: 2000 }).toBe(1);
 });
 
 test('a file dropped anywhere opens; two at once do not', async ({ page }) => {
@@ -373,7 +516,14 @@ test('a file dropped anywhere opens; two at once do not', async ({ page }) => {
   await expect(alert(page)).toHaveText('');
 });
 
-test('opening and zooming raises no policy violation, asks nothing of another origin and runs nothing from the file', async ({ page, baseURL }) => {
+test('opening and zooming raises no policy violation, in the page or in its reader; asks nothing of another origin; runs nothing from the file', async ({ page, baseURL }) => {
+  // The reader is a worker: it has its own events and its own global. A few lines in front of it watch them from inside.
+  const watch = "self.violations = []; addEventListener('securitypolicyviolation', e => self.violations.push(e.effectiveDirective + ' ' + e.blockedURI));\n";
+  await page.route(READER, async route => {
+    const response = await route.fetch();
+    const body = watch + (await response.text());
+    await route.fulfill({ response, body, headers: { ...response.headers(), 'content-length': String(Buffer.byteLength(body)) } });
+  });
   const asked: string[] = [];
   const said: string[] = [];
   page.on('request', request => { if (!request.url().startsWith(baseURL!) && !request.url().startsWith('blob:')) asked.push(request.url()); });
@@ -387,6 +537,11 @@ test('opening and zooming raises no policy violation, asks nothing of another or
   await redrawn(page, () => page.keyboard.press('+'));
   expect([asked, said]).toEqual([[], []]);
   expect(await page.evaluate(() => [(window as unknown as { violations: string[] }).violations, 'pwned' in window])).toEqual([[], false]);
+  const [reader] = page.workers();
+  const inside = () => reader.evaluate(() => [(self as unknown as { violations: string[] }).violations, 'pwned' in self]);
+  expect(await inside()).toEqual([[], false]);
+  await reader.evaluate(() => fetch('https://example.invalid/x').catch(() => {})); // the watch does see a violation in the reader
+  await expect.poll(inside).toEqual([['connect-src https://example.invalid/x'], false]);
 });
 
 test('file text cannot inject markup', async ({ page }) => {
@@ -484,7 +639,9 @@ describeSamples('samples', () => {
       await sharp(page);
       (await viewBox(page)).slice(2).forEach((value, i) => expect(Math.round(value)).toBe(box[i]));
       const ink = await pictures(page).last().evaluate((drawn: HTMLCanvasElement) => {
-        const { data } = drawn.getContext('2d')!.getImageData(0, 0, drawn.width, drawn.height);
+        const copy = new OffscreenCanvas(drawn.width, drawn.height).getContext('2d')!; // the picture's own canvas holds a bitmap, not a 2d context
+        copy.drawImage(drawn, 0, 0);
+        const { data } = copy.getImageData(0, 0, drawn.width, drawn.height);
         let dark = 0;
         for (let i = 0; i < data.length; i += 4) if (data[i] < 200) dark++;
         return dark / (data.length / 4);

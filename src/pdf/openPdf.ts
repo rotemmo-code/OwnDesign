@@ -13,19 +13,25 @@ export type PdfSession = {
   close(): void;
 };
 
-/** The caller's buffer is copied to the worker, never transferred: the page picture and the project file need it too. */
-export async function openPdf(bytes: ArrayBuffer): Promise<{ ok: true; session: PdfSession } | Refusal> {
+/**
+ * The caller's buffer is copied to the worker, never transferred: the page picture and the project file need it too.
+ * An abort ends the worker at once, also before it has answered; what is still open then answers failed.
+ */
+export async function openPdf(bytes: ArrayBuffer, signal?: AbortSignal): Promise<{ ok: true; session: PdfSession } | Refusal> {
   const worker = new Worker(new URL('./reader.worker.ts', import.meta.url), { type: 'module' });
   const waiting = new Map<number, (result: unknown) => void>();
   let lastId = 0;
   let ended: OpenError | null = null;
 
   const end = (code: OpenError) => {
-    ended ??= code;
+    if (ended) return;
+    ended = code;
     worker.terminate(); // also what frees the memory pdf.js took
     for (const answer of waiting.values()) answer({ ok: false, code: ended });
   };
   worker.onerror = worker.onmessageerror = () => end('failed');
+  signal?.addEventListener('abort', () => end('failed'));
+  if (signal?.aborted) end('failed'); // the next file came while this one was still being read
   // pdf.js posts messages of its own from this worker. They carry none of our ids.
   worker.onmessage = ({ data }) => waiting.get(data?.id)?.(data.result);
 
