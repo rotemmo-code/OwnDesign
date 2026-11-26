@@ -119,3 +119,12 @@ button or space. An independent review found a redraw queue that could end the r
 page, readers and bitmaps not released, and a Firefox wheel step 33 times too small; all fixed and
 re-reviewed. Tests: 387 unit, 26 edge, 126 browser. Not checked: Safari, Edge, a real screen reader, a
 change of pixel density between monitors. Pages: [pdf-importer](pdf-importer.md).
+
+## [2026-11-26] build | PDF importer: project file and autosave
+Storage only, no buttons yet: serialize and check a project file (size limit 64 MB, zod schema,
+embedded PDF checked), save through the File System Access API with a download fallback, and an
+autosave draft in IndexedDB guarded by a Web Lock so one tab owns it. Three review rounds fixed real
+loss paths: backups stopping after the first save, a second tab overwriting the first tab's draft,
+and a wrong system clock deleting a draft. User decision: a draft older than 14 days is flagged and
+asked about, never deleted silently. Tests: 428 unit, 26 edge, 202 browser. Not checked: Safari, the
+native save dialog, a real full disk. Pages: [pdf-importer](pdf-importer.md).
