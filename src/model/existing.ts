@@ -7,9 +7,10 @@ import {
   refuse,
   separatorBoundsMamad,
   separatorEntersMamad,
+  mamadAllows,
+  mamadWallsKept,
   wallEntersMamad,
   wallFits,
-  wallLockedByMamad,
 } from './rules';
 import { CAPS, LIMITS } from './schema';
 import type { Id, Notice, Opening, Project, Pt, Room, RoomChange, State, Wall } from './types';
@@ -69,7 +70,7 @@ export function rebuildExisting(
     return refuse('invalid-geometry');
   }
   const before = s.rooms.find(r => r.isMamad);
-  if (before && !mamadMayChange && !sameRoom(before, out.rooms.find(r => r.id === before.id))) refuse('mamad-locked');
+  if (before && !mamadMayChange && (!sameRoom(before, out.rooms.find(r => r.id === before.id)) || !mamadWallsKept(p.existing, s))) refuse('mamad-locked');
   const order = new Map(s.rooms.map((r, i) => [r.id, i]));
   let rooms = [...out.rooms].sort((x, y) => (order.get(x.id) ?? Infinity) - (order.get(y.id) ?? Infinity));
   let mamad = p.mamad;
@@ -98,7 +99,7 @@ export const existingHandlers: Handlers = {
     locked(p);
     const s = p.existing;
     const w = find(s.walls, a.id);
-    mamadLocked(wallLockedByMamad(s, w.id));
+    mamadLocked(!mamadAllows.delete(s, w.id));
     const { [w.id]: _, ...wallClass } = p.wallClass;
     const next = { ...s, walls: s.walls.filter(x => x !== w), openings: s.openings.filter(o => o.wallId !== w.id) };
     return rebuildExisting({ ...p, wallClass }, next, []);
@@ -107,7 +108,6 @@ export const existingHandlers: Handlers = {
     locked(p);
     const s = p.existing;
     const old = find(s.walls, a.id);
-    mamadLocked(wallLockedByMamad(s, old.id));
     const w: Wall = {
       ...old,
       a: a.a === undefined ? old.a : pt(a.a),
@@ -118,7 +118,7 @@ export const existingHandlers: Handlers = {
     if (l < LIMITS.wallLength - TOL) refuse('invalid-geometry');
     // side A stays side A, so a finish never changes sides
     if ((w.b.x - w.a.x) * (old.b.x - old.a.x) + (w.b.y - w.a.y) * (old.b.y - old.a.y) <= 0) refuse('invalid-geometry');
-    mamadLocked(wallEntersMamad(s, w));
+    mamadLocked(!mamadAllows.set(s, old, w) || wallEntersMamad(s, w));
     // M13: when end a slides along the wall by shift, the openings stay where they are
     const shift = ((w.a.x - old.a.x) * (w.b.x - w.a.x) + (w.a.y - old.a.y) * (w.b.y - w.a.y)) / l;
     const openings = shift ? s.openings.map(o => (o.wallId === w.id ? { ...o, offset: o.offset - shift } : o)) : s.openings;
@@ -128,8 +128,8 @@ export const existingHandlers: Handlers = {
     locked(p);
     const s = p.existing;
     const w = find(s.walls, a.id);
-    mamadLocked(wallLockedByMamad(s, w.id));
     const at = num(a.at);
+    mamadLocked(!mamadAllows.split(s, w.id, at));
     const l = length(w);
     if (at < LIMITS.wallLength - TOL || l - at < LIMITS.wallLength - TOL) refuse('invalid-geometry');
     const m = { x: w.a.x + ((w.b.x - w.a.x) * at) / l, y: w.a.y + ((w.b.y - w.a.y) * at) / l };

@@ -1,6 +1,7 @@
-import { area, contains, dist, intersection, polygon, rings, wallBody } from './geo';
+import { area, contains, corners, dist, intersection, polygon, rings, wallBody } from './geo';
+import { TOUCH } from './join';
 import { isExterior } from './kind';
-import { roomsOnSide } from './measure';
+import { faces, roomsOnSide } from './measure';
 import { live } from './rooms';
 import { LIMITS } from './schema';
 import type { Action, Id, Notice, Opening, Project, Pt, Reason, Room, Separator, State, Wall } from './types';
@@ -81,20 +82,91 @@ export function wallBoundsMamad(s: State, wallId: Id): boolean {
   return !!m && (['A', 'B'] as const).some(side => roomsOnSide(s, wallId, side).includes(m.id));
 }
 
-/**
- * Walls a change may not touch while a room is marked as the mamad. shortcut: every wall that bounds the mamad over any
- * part of its length; if the owner relaxes it, only the outline guard of rebuildExisting and a split inside the mamad's
- * face span stay.
- */
-export const wallLockedByMamad = (s: State, wallId: Id): boolean => wallBoundsMamad(s, wallId);
-
 const toSegment = (p: Pt, a: Pt, b: Pt) => {
   const l2 = (b.x - a.x) ** 2 + (b.y - a.y) ** 2;
   const t = l2 ? Math.max(0, Math.min(1, ((p.x - a.x) * (b.x - a.x) + (p.y - a.y) * (b.y - a.y)) / l2)) : 0;
   return dist(p, { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t });
 };
+const toBody = (w: Wall, p: Pt) => {
+  const c = corners(w.a, w.b, w.thickness);
+  return contains(c, p) ? 0 : Math.min(...c.map((q, i) => toSegment(p, q, c[(i + 1) % 4])));
+};
+/** Place along w's line from a, and distance beside it. */
+const along = (w: Wall, p: Pt) => {
+  const l = length(w);
+  const [x, y] = [p.x - w.a.x, p.y - w.a.y];
+  return { at: (x * (w.b.x - w.a.x) + y * (w.b.y - w.a.y)) / l, off: Math.abs(x * (w.b.y - w.a.y) - y * (w.b.x - w.a.x)) / l };
+};
+const onLine = (w: Wall, q: Wall) => q.thickness === w.thickness && along(w, q.a).off <= TOL && along(w, q.b).off <= TOL;
+
+/**
+ * The span of the wall, in mm from a, where a face of it is an edge of the mamad (from the first to the last piece that
+ * measure.faces finds); before and after: the thickness of the thickest other wall that reaches the wall's centre line
+ * there (within half its thickness + 2.01 mm), which is the corner joint of the mamad. null: the wall does not bound it.
+ */
+export function mamadSpan(s: State, wallId: Id): { from: number; to: number; before: number; after: number } | null {
+  const m = mamadOf(s);
+  const w = s.walls.find(x => x.id === wallId);
+  if (!m || !w) return null;
+  const pieces = (['A', 'B'] as const).flatMap(side => faces(s, wallId, side)).filter(f => f.room === m.id);
+  if (!pieces.length) return null;
+  const [from, to] = [Math.min(...pieces.map(f => f.from)), Math.max(...pieces.map(f => f.to))];
+  const reach = (t: number) => {
+    const c = { x: w.a.x + ((w.b.x - w.a.x) * t) / length(w), y: w.a.y + ((w.b.y - w.a.y) * t) / length(w) };
+    return Math.max(0, ...live(s.walls).filter(o => o.id !== w.id && toBody(o, c) <= w.thickness / 2 + TOUCH).map(o => o.thickness));
+  };
+  return { from, to, before: reach(from), after: reach(to) };
+}
+
+/**
+ * What a change may do to a wall while a room is marked as the mamad (owner: only the mamad is locked, not the whole
+ * wall). A wall that bounds it is never deleted; it is split only outside its span and the corner joints there; its end
+ * moves only along its own line, thickness kept, the span still covered.
+ */
+export const mamadAllows = {
+  delete: (s: State, wallId: Id): boolean => !wallBoundsMamad(s, wallId),
+  split: (s: State, wallId: Id, at: number): boolean => {
+    const k = mamadSpan(s, wallId);
+    return !k || at <= k.from - k.before + TOL || at >= k.to + k.after - TOL;
+  },
+  set: (s: State, old: Wall, w: Wall): boolean => {
+    const k = mamadSpan(s, old.id);
+    return !k || (onLine(old, w) && along(old, w.a).at <= k.from + TOL && along(old, w.b).at >= k.to - TOL);
+  },
+};
+
+/**
+ * After a change: every wall that bounded the mamad before still lies there, same line and thickness, along all of its
+ * span (any wall on that line counts, so the two parts of a split do). The outline guard alone misses a wall thickened or
+ * thinned outward, which keeps the inside face.
+ */
+export function mamadWallsKept(before: State, after: State): boolean {
+  const m = mamadOf(before);
+  if (!m) return true;
+  const xs = m.boundary.map(q => q.x);
+  const ys = m.boundary.map(q => q.y);
+  const room: Box = { x0: Math.min(...xs) - 1, x1: Math.max(...xs) + 1, y0: Math.min(...ys) - 1, y1: Math.max(...ys) + 1 };
+  return before.walls
+    .filter(w => meet(boxOf(w), room))
+    .every(w => {
+      const k = mamadSpan(before, w.id);
+      if (!k) return true;
+      const cover = live(after.walls)
+        .filter(q => onLine(w, q))
+        .map(q => [along(w, q.a).at, along(w, q.b).at].sort((x, y) => x - y))
+        .sort((x, y) => x[0] - y[0]);
+      let reached = k.from;
+      for (const [x0, x1] of cover) if (x0 <= reached + TOL) reached = Math.max(reached, x1);
+      return reached >= k.to - TOL;
+    });
+}
+
 const toRings = (region: Pt[][], p: Pt) => Math.min(...region.flatMap(r => r.map((a, i) => toSegment(p, a, r[(i + 1) % r.length]))));
-/** The body of w reaches more than 0.01 mm into the mamad's floor (judged by depth, not area, whatever its length). */
+/**
+ * The body of w reaches more than 0.01 mm into the mamad's floor, judged by depth, not area, whatever its length. It
+ * misses a thin wall that crosses the mamad from edge to edge (every corner of the overlap lies on the mamad's outline);
+ * the outline guard of rebuildExisting refuses that one.
+ */
 export function wallEntersMamad(s: State, w: Wall): boolean {
   const m = mamadOf(s);
   if (!m || length(w) < LIMITS.wallLength - TOL) return false;

@@ -119,6 +119,14 @@ it(
           expect(Object.keys(res).sort()).toEqual(['ok', 'reason']);
           continue;
         }
+        const ring = p.existing.rooms.find(x => x.isMamad);
+        // x.keepName moves the mark with the id to another room by design (the answer to a split), so it is left out
+        if (ring && a.type.startsWith('x.') && a.type !== 'x.keepName') {
+          const now = res.project.existing.rooms.find(x => x.id === ring.id)!;
+          expect(now.boundary.length, JSON.stringify(a)).toBe(ring.boundary.length);
+          ring.boundary.forEach((q, k) => expect(Math.hypot(q.x - now.boundary[k].x, q.y - now.boundary[k].y), JSON.stringify(a)).toBeLessThan(0.03));
+          expect(now.holes.length).toBe(ring.holes.length);
+        }
         const parsed = ProjectSchema.safeParse(res.project);
         expect(parsed.success, `${JSON.stringify(a)}: ${parsed.error?.issues[0]?.message}`).toBe(true);
         if (GEOMETRIC.includes(a.type) && res.project.existing !== p.existing) {
