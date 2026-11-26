@@ -84,7 +84,7 @@ describe('parseProject', () => {
     const padded = t + ' '.repeat(MAX_PROJECT_BYTES - t.length);
     expect(outcome(padded)).toBe('ok');
     expect((await openProject(new Blob([padded]))).ok).toBe(true);
-    expect((await openProject(new Blob(['﻿' + t]))).ok).toBe(true);
+    expect((await openProject(new Blob(['\uFEFF' + t]))).ok).toBe(true);
   });
 
   it('a 20 MiB PDF round-trips, text under 29,000,000 characters', () => {
@@ -103,7 +103,7 @@ describe('fileName', () => {
     ['a/b\\c:d*e?f"g<h>i|j', 'a_b_c_d_e_f_g_h_i_j.etelier.json'],
     ['', 'project.etelier.json'],
     ['  ', 'project.etelier.json'],
-    ['a‮b', 'a_b.etelier.json'],
+    ['a\u202Eb', 'a_b.etelier.json'],
     ['x'.repeat(200), 'x'.repeat(100) + '.etelier.json'],
     ['x'.repeat(99) + '😀', 'x'.repeat(99) + '_.etelier.json'],
   ])('fileName %s', (name, file) => {
@@ -225,8 +225,22 @@ describe('saveProject', () => {
     expect(pick.mock.calls[0]![0].suggestedName).toBe('n.etelier.json');
     pick.mockRejectedValueOnce(new DOMException('cancelled', 'AbortError'));
     expect(await saveProject(named('n'), null)).toEqual({ ok: false, error: 'cancelled' });
-    pick.mockRejectedValueOnce(new DOMException('no', 'SecurityError'));
-    expect(await saveProject(named('n'), null)).toEqual({ ok: false, error: 'failed' });
+  });
+
+  it('the picker refused for another reason (user activation expired, a policy): the project is downloaded instead', async () => {
+    const link = { click: vi.fn(), href: '', download: '' };
+    vi.stubGlobal('window', { showSaveFilePicker: vi.fn().mockRejectedValue(new DOMException('no gesture', 'SecurityError')) });
+    vi.stubGlobal('document', { createElement: () => link });
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:y');
+    expect(await saveProject(named('n'), null)).toEqual({ ok: true, target: null });
+    expect([link.download, link.click.mock.calls.length]).toEqual(['n.etelier.json', 1]);
+  });
+
+  it('an error named constructor or toString is failed, never a value from Object.prototype', async () => {
+    for (const name of ['constructor', 'toString', '__proto__']) {
+      const handle = { requestPermission: async () => 'granted', getFile: async () => ({ lastModified: 5 }), createWritable: async () => { throw new DOMException('x', name); } };
+      expect(await saveProject(named('n'), { handle: handle as unknown as FileSystemFileHandle, lastModified: null })).toEqual({ ok: false, error: 'failed' });
+    }
   });
 
   it('no target, no picker: download n.etelier.json, one click, URL not revoked at 59,999 ms, revoked at 60,000', async () => {

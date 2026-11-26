@@ -37,9 +37,9 @@ export function parseProject(text: string): Parsed {
 
 /** Everything after JSON.parse. The project returned is zod's copy, never the input. */
 export function checkProject(json: unknown): Parsed {
-  const version = (json as { version?: unknown } | null)?.version;
-  if (typeof version === 'number' && version !== 1) return { ok: false, error: 'wrong-version' };
   try {
+    const version = (json as { version?: unknown } | null)?.version;
+    if (typeof version === 'number' && version !== 1) return { ok: false, error: 'wrong-version' };
     // validate stops at the first bad item; it can still throw (300,000 bad wallClass entries overflow the stack)
     if (!z.validate(ProjectSchema, json)) return { ok: false, error: 'invalid' };
     const project = ProjectSchema.parse(json);
@@ -77,8 +77,11 @@ export const pdfToBase64 = (bytes: BlobPart): Promise<string> =>
 export const fileName = (name: string): string =>
   `${name.slice(0, 100).replace(/[\\/:*?"<>|\p{C}]/gu, '_').trim() || 'project'}.etelier.json`;
 
-const ERRORS: Record<string, SaveError> = { NotAllowedError: 'denied', NotFoundError: 'missing' };
-const failure = (error: unknown): Saved => ({ ok: false, error: ERRORS[(error as Error | null)?.name ?? ''] ?? 'failed' });
+const ERRORS = new Map<unknown, SaveError>([
+  ['NotAllowedError', 'denied'],
+  ['NotFoundError', 'missing'],
+]);
+const failure = (error: unknown): Saved => ({ ok: false, error: ERRORS.get((error as Error | null)?.name) ?? 'failed' });
 
 let saving = false;
 /** target null: "save as". Never throws. */
@@ -115,7 +118,10 @@ async function save(p: Project, target: Target | null): Promise<Saved> {
       handle = await window.showSaveFilePicker!({ suggestedName: fileName(p.name), types: [{ accept: { 'application/json': ['.json'] } }] });
     } catch (error) {
       // only here does AbortError mean the user cancelled: a close refused by Safe Browsing is an AbortError too
-      return (error as Error | null)?.name === 'AbortError' ? { ok: false, error: 'cancelled' } : failure(error);
+      if ((error as Error | null)?.name === 'AbortError') return { ok: false, error: 'cancelled' };
+      // refused for another reason (a policy, or the click is too old after a long check): a download still saves it
+      download(blob, fileName(p.name));
+      return { ok: true, target: null };
     }
   }
   const writable = await handle.createWritable();
