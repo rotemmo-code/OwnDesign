@@ -59,19 +59,25 @@ const pixel = async (page: Page, x: number, y: number) => (await pixels(page, x,
 const SLOW = Array.from({ length: 99_000 }, (_, i) => `${i % 600} 0 m ${600 - (i % 600)} 400 l S`).join('\n');
 
 type Spy = { sent: string[]; got: ImageBitmap[] };
-/** Records what is asked of a reader and every picture that comes back. failing: which answers turn into failed (after the first picture, for redraws). */
-const spy = (page: Page, failing?: 'pages' | 'redraws') =>
+/**
+ * Records what is asked of a reader and every picture that comes back. failing: which answers turn into failed (after the first
+ * picture, for redraws); 'throw': the first redraw comes back without a result, so that the draw waiting for it throws.
+ */
+const spy = (page: Page, failing?: 'pages' | 'redraws' | 'throw') =>
   page.addInitScript(failing => {
     const spied: Spy = { sent: [], got: [] };
     Object.assign(window, { spied });
-    const fails = ({ result }: { result?: { page?: object; picture?: object } }) =>
-      failing === 'pages' ? !!result?.page : failing === 'redraws' && !!result?.picture && !result.page && spied.got.length > 2;
+    type Answer = { id: number; result?: { page?: object; picture?: object } };
+    const redraw = ({ result }: Answer) => !!result?.picture && !result.page;
+    const fails = (data: Answer) => (failing === 'pages' ? !!data.result?.page : failing === 'redraws' && redraw(data) && spied.got.length > 2);
+    const breaks = (data: Answer) => failing === 'throw' && redraw(data) && spied.got.length === 2;
     const onmessage = Object.getOwnPropertyDescriptor(Worker.prototype, 'onmessage')!;
     Object.defineProperty(Worker.prototype, 'onmessage', {
       set(listen: (event: MessageEvent) => void) {
         onmessage.set!.call(this, (event: MessageEvent) => {
           const bitmap = event.data?.result?.picture?.bitmap;
           if (bitmap) spied.got.push(bitmap);
+          if (breaks(event.data)) return listen({ data: { id: event.data.id } } as MessageEvent);
           listen(fails(event.data) ? ({ data: { id: event.data.id, result: { ok: false, code: 'failed' } } } as MessageEvent) : event);
         });
       },
@@ -224,7 +230,7 @@ test('drags with the middle button, or with space and the left one; the left one
   expect(await viewBox(page)).toEqual(still);
 });
 
-test('space drags wherever the focus is, and over the drawing it presses no button', async ({ page }) => {
+test('over the drawing, space drags right after a button was clicked, and presses no button', async ({ page }) => {
   await open(page, planPdf());
   const zoomIn = page.getByRole('button', { name: copy.zoomIn });
   await zoomIn.click(); // the focus is on the button now
@@ -245,6 +251,54 @@ test('space drags wherever the focus is, and over the drawing it presses no butt
   await zoomIn.focus();
   await page.keyboard.press(' ');
   await expect.poll(async () => (await viewBox(page))[2]).toBeCloseTo(moved[2] / 1.25, 6);
+});
+
+test('over the drawing, space presses a button the keyboard moved to: a zoom button, a page button', async ({ page }) => {
+  await page.goto('/');
+  await upload(page, twoPages());
+  await page.getByRole('button', { name: copy.page(1) }).click();
+  await sharp(page);
+  const middle = await onScreen(page, 300, 200);
+  await page.mouse.move(middle.x, middle.y); // where a resting pointer usually is
+  await page.keyboard.press('Tab'); // from the drawing
+  await expect(page.getByRole('button', { name: copy.zoomIn })).toBeFocused();
+  const view = await viewBox(page);
+  await page.keyboard.press(' ');
+  await expect.poll(async () => (await viewBox(page))[2]).toBeCloseTo(view[2] / 1.25, 6);
+  await page.keyboard.press('Shift+Tab');
+  await expect(canvas(page)).toBeFocused(); // by the keyboard too: on the drawing, space still drags
+  const zoomed = await viewBox(page);
+  await page.keyboard.down(' ');
+  await page.mouse.down();
+  await page.mouse.move(middle.x + 160, middle.y + 80, { steps: 4 });
+  await page.mouse.up();
+  await page.keyboard.up(' ');
+  expect((await viewBox(page))[0]).toBeLessThan(zoomed[0] - 30);
+  await page.keyboard.press('Shift+Tab');
+  await expect(page.getByRole('button', { name: copy.page(2) })).toBeFocused();
+  await page.keyboard.press(' ');
+  await expect(canvas(page)).toHaveAccessibleName(copy.drawing(2));
+});
+
+test('over the drawing, space opens the file chooser of a clicked upload control and goes into a text field', async ({ page }) => {
+  await open(page, planPdf());
+  const clicked = page.waitForEvent('filechooser');
+  await page.getByTestId('upload').click(); // by the mouse: so no :focus-visible
+  await clicked;
+  const middle = await onScreen(page, 421, 297.5);
+  await page.mouse.move(middle.x, middle.y);
+  await expect(page.getByTestId('upload')).toBeFocused();
+  const chooser = page.waitForEvent('filechooser', { timeout: 5_000 });
+  await page.keyboard.press(' ');
+  await chooser;
+  await page.evaluate(() => {
+    const field = Object.assign(document.createElement('input'), { id: 'typed' });
+    Object.assign(field.style, { position: 'fixed', top: '0', left: '0' }); // not under the pointer
+    document.body.append(field);
+  });
+  await page.locator('#typed').focus();
+  await page.keyboard.type('a b');
+  await expect(page.locator('#typed')).toHaveValue('a b');
 });
 
 test('the keyboard and the buttons zoom and move too', async ({ page }) => {
@@ -466,6 +520,16 @@ test('a redraw that fails keeps the page and says so', async ({ page }) => {
   await expect(alert(page)).toHaveText(copy.notSharper);
   await expect(canvas(page)).toBeVisible();
   await expect(pictures(page)).toHaveCount(2);
+});
+
+test('a redraw that throws does not stop the next one', async ({ page }) => {
+  await spy(page, 'throw');
+  await page.goto('/');
+  await upload(page, planPdf());
+  await expect.poll(() => page.evaluate(() => (window as unknown as { spied: Spy }).spied.got.length)).toBe(2); // the page, and the redraw that threw
+  await expect(pictures(page)).toHaveCount(1);
+  await page.keyboard.press('+');
+  await sharp(page);
 });
 
 test('a redraw that hangs keeps the page and says so', async ({ page }) => {

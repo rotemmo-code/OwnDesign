@@ -30,6 +30,7 @@ export function Canvas({ page, pageNo, picture, draw, children }: Props) {
   const [grab, setGrab] = useState(false); // space is down over the drawing
   const space = useRef(false);
   const hovered = useRef(false);
+  const tabbed = useRef<EventTarget | null>(null); // the control the keyboard moved the focus to
   const held = useRef<Vec | null>(null); // the point of the page under the pointer, while it is dragged
   // One redraw at a time, and then only of the newest view: a slow page takes seconds for each.
   const queue = useRef<{ busy: boolean; next: Part | null; gone: boolean }>({ busy: false, next: null, gone: false });
@@ -65,19 +66,25 @@ export function Canvas({ page, pageNo, picture, draw, children }: Props) {
       const factor = wheelFactor(event);
       setView(old => zoomed(old, page, at, factor));
     };
-    // Space is heard wherever the focus is, so that it drags right after a button was used, and presses no button over the drawing.
+    // Over the drawing, space drags, also right after a button was clicked, and presses no button. It stays with a field and with a
+    // control the keyboard moved to. :focus-visible is read on focusin: Chromium gives it to a clicked button too once a key is down.
+    const focused = ({ target }: FocusEvent) => (tabbed.current = target instanceof Element && target.matches(':focus-visible') ? target : null);
+    const keeps = (target: EventTarget | null) =>
+      target !== svg.current && (target === tabbed.current || (target instanceof HTMLElement && (target.isContentEditable || target.matches('input, textarea, select'))));
     const keys = (event: KeyboardEvent) => {
-      if (event.key !== ' ' || (event.type === 'keydown' ? !hovered.current : !space.current)) return;
+      if (event.key !== ' ' || (event.type === 'keydown' ? !hovered.current || keeps(event.target) : !space.current)) return;
       event.preventDefault();
       setGrab((space.current = event.type === 'keydown'));
     };
     const away = () => setGrab((space.current = false));
     element.addEventListener('wheel', wheel, { passive: false });
+    addEventListener('focusin', focused);
     addEventListener('keydown', keys);
     addEventListener('keyup', keys);
     addEventListener('blur', away);
     return () => {
       element.removeEventListener('wheel', wheel);
+      removeEventListener('focusin', focused);
       removeEventListener('keydown', keys);
       removeEventListener('keyup', keys);
       removeEventListener('blur', away);
@@ -90,13 +97,16 @@ export function Canvas({ page, pageNo, picture, draw, children }: Props) {
     wait.next = part;
     if (wait.busy) return;
     wait.busy = true;
-    for (let todo: Part | null = part; todo && !wait.gone; todo = wait.next) {
-      wait.next = null;
-      const drawn = await draw(todo.box, todo.scale);
-      if (drawn && wait.gone) drawn.bitmap.close();
-      else if (drawn) setSharp(drawn);
+    try {
+      for (let todo: Part | null = part; todo && !wait.gone; todo = wait.next) {
+        wait.next = null;
+        const drawn = await draw(todo.box, todo.scale);
+        if (drawn && wait.gone) drawn.bitmap.close();
+        else if (drawn) setSharp(drawn);
+      }
+    } finally {
+      wait.busy = false; // a draw that throws must not stop the next views
     }
-    wait.busy = false;
   }
 
   useEffect(() => {
