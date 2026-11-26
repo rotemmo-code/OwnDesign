@@ -17,8 +17,9 @@ Work in progress. Built and reviewed so far:
 | Scale calibration from written dimensions | `src/calibrate/` |
 | Project data model and file schema | `src/model/types.ts`, `schema.ts` |
 | Wall joints, rooms, gap closing, measurements, wall kind | `src/model/geo.ts`, `join.ts`, `rooms.ts`, `measure.ts`, `kind.ts` |
+| Project file (open, save, download) and autosave draft in the browser | `src/storage/` |
 
-Not built yet: the calibration and editor screens, saving, wall detection, the planned state, PDF output.
+Not built yet: the calibration and editor screens, the save buttons, wall detection, the planned state, PDF output.
 Scanned (image-only) PDFs are out of scope for this version.
 
 ## Run
