@@ -27,3 +27,31 @@ button[aria-pressed='true'], .upload { color: var(--c-paper); background: var(--
 .tools { justify-content: space-between; align-items: center; padding: 8px 16px; box-shadow: 0 -1px var(--c-ink); }
 .empty header { flex: 1; flex-direction: column; justify-content: center; margin: 24px; border: 2px dashed var(--c-ink); border-radius: 8px; box-shadow: none; }
 .empty [data-testid='drawing'] { flex: 0; }
+
+/* Calibration and measuring (Task 6). The panel sits beside the drawing, or under it in a narrow window: never above it. */
+[data-testid='drawing'] { display: grid; grid-template-columns: minmax(0, 1fr) 22rem; grid-template-rows: minmax(0, 1fr) auto; }
+.frame { grid-column: 1; grid-row: 1; }
+.tools { grid-column: 1 / -1; grid-row: 2; }
+.panel { grid-column: 2; grid-row: 1; min-block-size: 0; overflow: auto; padding: 8px 16px; box-shadow: inset 1px 0 var(--c-ink); }
+.panel:empty { display: none; }
+@media (max-width: 700px) {
+  [data-testid='drawing'] { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto minmax(0, 1fr); }
+  .panel { grid-column: 1; grid-row: 3; box-shadow: inset 0 1px var(--c-ink); }
+}
+.panel h2 { font-size: inherit; margin: 0 0 8px; }
+.panel section > * { margin-block-end: 8px; }
+.panel [role='group'], .panel form { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.panel [role='group'] > span { inline-size: 100%; }
+.panel ol { margin: 0; padding-inline-start: 24px; }
+.panel li button { margin-inline-start: 8px; padding: 0 8px; }
+.panel input { font: inherit; inline-size: 6em; border: 1px solid var(--c-ink); border-radius: 4px; padding: 2px 6px; }
+.panel .go { color: var(--c-paper); background: var(--c-dimension); }
+.warn, .bad strong, .unverified { font-weight: 700; }
+.unverified { box-shadow: inset 4px 0 var(--c-ink); }
+.frame svg { cursor: crosshair; }
+.frame svg.grab { cursor: grab; }
+.dim line, .dim rect, .snap, .aim { fill: none; stroke: var(--c-dimension); stroke-width: 1.5px; vector-effect: non-scaling-stroke; pointer-events: none; }
+.dim text { fill: var(--c-dimension); text-anchor: middle; font-family: inherit; pointer-events: none; }
+.halo .dim line, .halo .dim rect, .halo .snap { stroke: var(--c-paper); stroke-width: 4px; }
+.halo .dim text { fill: var(--c-paper); stroke: var(--c-paper); stroke-width: 3px; }
+.aim { stroke: var(--c-ink); }

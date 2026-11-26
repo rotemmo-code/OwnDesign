@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Dim, Vec } from '../../src/shared';
-import { fitCalibration, type Fit } from '../../src/calibrate/fit';
+import { calibrationOf, fitCalibration, type Fit } from '../../src/calibrate/fit';
 
 // Every value is synthetic. A dimension is written [drawn mm, written mm]; `at` draws it at one scale (mm per point).
 type Pair = [drawn: number, written: number];
@@ -84,13 +84,13 @@ describe('standard scales', () => {
       expect(answer(fit50([drawn, written], ...others)), `${drawn}/${written}`).not.toBe('ok');
     expect(fit50([6080, 6000], [5050, 5000], [3050, 3000], [1050, 1000])).toMatchObject({ status: 'ok-offset', offsetMm: expect.closeTo(57.5, 6) });   // 22.5 mm at 6 m, after the offset
   });
-  it('an offset of -1 to 8 cm is accepted, 0.1 mm more is not: then one more dimension is asked for', () => {
+  it('an offset of -1 to 8 cm is accepted, 0.1 mm more is not: then the drawing cannot be calibrated', () => {
     for (const c of [-10, 30, 80]) expect(fit50(...meanOffset(c)), String(c)).toMatchObject({ status: 'ok-offset', offsetMm: expect.closeTo(c, 6) });
-    for (const c of [-10.1, 80.1, -50, 95]) expect(answer(fit50(...meanOffset(c))), String(c)).toBe('need-more spread');
+    for (const c of [-10.1, 80.1, -50, 95]) expect(answer(fit50(...meanOffset(c))), String(c)).toBe('need-more offset');
   });
-  it('an offset of exactly 10 cm asks for one more dimension, above it the dimensions contradict each other', () => {
-    expect(answer(fit50(...offsetBy(100, 5000, 4000, 3000, 1000)))).toBe('need-more spread');
-    expect(answer(fit50(...offsetBy(-100, 5000, 4000, 3000, 1000)))).toBe('need-more spread');
+  it('an offset of exactly 10 cm cannot be calibrated, above it the dimensions contradict each other', () => {
+    expect(answer(fit50(...offsetBy(100, 5000, 4000, 3000, 1000)))).toBe('need-more offset');
+    expect(answer(fit50(...offsetBy(-100, 5000, 4000, 3000, 1000)))).toBe('need-more offset');
     expect(answer(fit50(...offsetBy(100.1, 5000, 4000, 3000, 1000)))).toBe('inconsistent');
     expect(answer(fit50(...offsetBy(-100.1, 5000, 4000, 3000, 1000)))).toBe('inconsistent');
   });
@@ -267,13 +267,13 @@ describe('a scale that is not standard', () => {
       residualsMm: [0, 0, 0, 0].map(r => expect.closeTo(r, 6)), used: [true, true, true, true],
     });
     for (const c of [50, 80]) expect(fit118(...offsetBy(c, 5000, 4000, 3000, 1000)), String(c)).toMatchObject({ status: 'nonstandard', scale: expect.closeTo(118, 6), offsetMm: expect.closeTo(c, 6) });
-    for (const c of [80.1, -60, 100, -100]) expect(answer(fit118(...offsetBy(c, 5000, 4000, 3000, 1000))), String(c)).toBe('need-more spread');
+    for (const c of [80.1, -60, 100, -100]) expect(answer(fit118(...offsetBy(c, 5000, 4000, 3000, 1000))), String(c)).toBe('need-more offset');
     for (const c of [100.1, -100.1]) expect(answer(fit118(...offsetBy(c, 5000, 4000, 3000, 1000))), String(c)).toBe('inconsistent');
   });
-  it('an offset of -1 cm is accepted, 0.1 mm more is not', () => {
+  it('an offset of -1 cm is accepted, 0.1 mm more cannot be calibrated', () => {
     const bent = (c: number): Pair[] => [[6000, 5991 - c], [5000, 5009 - c], [4000, 4009 - c], [3000, 2991 - c]];        // 9 mm off in turn, so that a scale without an offset does not fit
     expect(fit118(...bent(-10))).toMatchObject({ status: 'nonstandard', scale: expect.closeTo(118, 6), offsetMm: expect.closeTo(-10, 6) });
-    expect(answer(fit118(...bent(-10.1)))).toBe('need-more spread');
+    expect(answer(fit118(...bent(-10.1)))).toBe('need-more offset');
   });
   it('a scale without an offset is the least-squares one', () => {
     expect(fit118([5000, 4995], [2500, 2510], [4000, 4000], [2000, 2000])).toMatchObject({                                // residuals 5, -10, 0, 0
@@ -308,8 +308,8 @@ describe('the same dimensions give the same answer wherever they lie on the page
     ['a dimension exactly at its tolerance', 'ok', [[2010, 2000], [4020, 4000], [6000, 6000], [1500, 1500]]],
     ['an offset of exactly 8 cm', 'ok-offset', offsetBy(80, 5000, 4000, 3000, 1000)],
     ['an offset of exactly -1 cm', 'ok-offset', meanOffset(-10)],
-    ['an offset of exactly 10 cm', 'need-more spread', offsetBy(100, 5000, 4000, 3000, 1000)],
-    ['an offset of exactly -10 cm', 'need-more spread', offsetBy(-100, 5000, 4000, 3000, 1000)],
+    ['an offset of exactly 10 cm', 'need-more offset', offsetBy(100, 5000, 4000, 3000, 1000)],
+    ['an offset of exactly -10 cm', 'need-more offset', offsetBy(-100, 5000, 4000, 3000, 1000)],
     ['an offset of exactly -1 cm on the button', 'need-more spread button 50', [[2984, 3000], [3092, 3100], [3192, 3200], [3292, 3300]]],
     ['an offset of exactly 8 cm on the button', 'need-more spread button 50', [[3086, 3000], [3178, 3100], [3278, 3200], [3378, 3300]]],
     ['an offset of exactly 8 cm, three dimensions', 'need-more count button 50', offsetBy(80, 5000, 3000, 1000)],
@@ -337,7 +337,7 @@ describe('the same dimensions give the same answer wherever they lie on the page
     ['1 cm from a scale without an offset', 'nonstandard', 118, [[5000, 4995], [2500, 2510], [4000, 4000], [2000, 2000]]],
     ['1 cm from a scale with an offset', 'nonstandard', 118, [[6000, 5940], [5000, 4960], [4000, 3960], [3000, 2940]]],
     ['a scale and an offset of exactly 8 cm', 'nonstandard', 118, offsetBy(80, 5000, 4000, 3000, 1000)],
-    ['a scale and an offset of exactly 10 cm', 'need-more spread', 118, offsetBy(100, 5000, 4000, 3000, 1000)],
+    ['a scale and an offset of exactly 10 cm', 'need-more offset', 118, offsetBy(100, 5000, 4000, 3000, 1000)],
     ['four equal lengths at a scale that is not standard', 'need-more spread', 118, exact(5000, 5000, 5000, 5000)],
   ])('%s -> %s', (_, expected, scale, pairs) => {
     expect(answersAnywhere(mmPerPt(scale), pairs)).toEqual([expected]);
@@ -432,4 +432,64 @@ it('the dimensions are not changed, and a frozen list is fine', () => {
   Object.freeze(dims);
   expect(answer(fit(dims))).toBe('ok');
   expect(dims).toEqual(before);
+});
+
+describe('a constant offset outside -1..8 cm (Task 6): the scale is certain, the drawing still cannot be calibrated', () => {
+  it('pinned -> need-more offset and no button; a fifth dimension does not change it', () => {
+    expect(fit50(...offsetBy(90, 5000, 4000, 3000, 1000))).toMatchObject({ status: 'need-more', need: 'offset', scale: NaN, mmPerPt: NaN, offsetMm: NaN });
+    expect(fit50(...offsetBy(90, 5000, 4000, 3000, 1000)).unverified).toBeUndefined();
+    expect(answer(fit50(...offsetBy(90, 5000, 4000, 3000, 1000, 6000)))).toBe('need-more offset');
+    expect(answer(fit50(...offsetBy(-20, 5000, 4000, 3000, 1000)))).toBe('need-more offset');
+    expect(answer(fit118(...offsetBy(90, 5000, 4000, 3000, 1000)))).toBe('need-more offset');
+  });
+  it('offsets of 8 and -1 cm are still accepted; similar lengths with 9 cm still ask for more', () => {
+    expect(answer(fit50(...offsetBy(80, 5000, 4000, 3000, 1000)))).toBe('ok-offset');
+    expect(answer(fit50(...meanOffset(-10)))).toBe('ok-offset');
+    expect(answer(fit50(...offsetBy(90, 5000, 5010, 4910, 4950)))).toBe('need-more spread');
+    expect(answer(fit50(...offsetBy(90, 5000, 3000, 1000)))).toBe('need-more count');
+  });
+});
+
+describe('calibrationOf: the only way to a calibration', () => {
+  const dimsAt = (k: number, ...pairs: Pair[]) => at(k, ...pairs);
+  it('an accepted fit gives a verified calibration with its own numbers and the very dimensions', () => {
+    const cases: [Dim[], 50 | 100, string][] = [
+      [dimsAt(K50, ...exact(5000, 4000, 3000, 1000)), 50, 'ok'],
+      [dimsAt(K50, ...offsetBy(50, 5000, 4000, 3000, 1000)), 50, 'ok-offset'],
+      [dimsAt(K100, ...exact(5000, 4000, 3000, 1000)), 50, 'other-standard'],
+      [dimsAt(K118, ...exact(5000, 4000, 3000, 1000)), 50, 'nonstandard'],
+    ];
+    for (const [dims, chosen, status] of cases) {
+      const f = fitCalibration(dims, chosen);
+      expect(f.status).toBe(status);
+      expect(calibrationOf(dims, chosen, 'accept'), status).toStrictEqual({ scale: f.scale, mmPerPt: f.mmPerPt, offsetMm: f.offsetMm, chosen, dims, verified: true });
+      expect(calibrationOf(dims, chosen, 'unverified'), status).toBeNull();
+    }
+  });
+  it('every refusal gives none; the button only where the fit offers it, with its numbers', () => {
+    const cases: [Dim[], string][] = [
+      [[], 'need-more count'],
+      [dimsAt(K50, ...exact(5000)), 'need-more count button 50'],
+      [dimsAt(K50, ...exact(2000, 1500, 1200)), 'need-more long'],
+      [dimsAt(K50, ...exact(5000, 5000, 5000, 5000)), 'need-more spread button 50'],
+      [dimsAt(K118, ...exact(5000, 5000, 5000, 5000)), 'need-more spread'],
+      [dimsAt(mmPerPt(75), [1015, 1000], [2015, 2000], [2515, 2500], [3015, 3000]), 'need-more ambiguous'],
+      [dimsAt(K50, ...offsetBy(90, 5000, 4000, 3000, 1000)), 'need-more offset'],
+      [dimsAt(K50, [6000, 6000], [4000, 4400], [2900, 2900]), 'inconsistent'],
+      [[dimOf(5000, 5000), { a: [9, 9], b: [9, 9], writtenMm: 3000 }, dimOf(3000, 3000)], 'invalid'],
+    ];
+    for (const [dims, expected] of cases) {
+      const f = fitCalibration(dims, 50);
+      expect(answer(f)).toBe(expected);
+      expect(calibrationOf(dims, 50, 'accept'), expected).toBeNull();
+      const button = calibrationOf(dims, 50, 'unverified');
+      if (!f.unverified) expect(button, expected).toBeNull();
+      else expect(button, expected).toStrictEqual({ ...f.unverified, chosen: 50, dims, verified: false });
+      if (button) expect([button.scale, button.mmPerPt, button.offsetMm].every(Number.isFinite)).toBe(true);
+    }
+  });
+  it('the button keeps the chosen scale apart from the scale it carries', () => {
+    const dims = dimsAt(K100, ...exact(5000));
+    expect(calibrationOf(dims, 50, 'unverified')).toMatchObject({ scale: 100, chosen: 50, mmPerPt: expect.closeTo(35.277778, 6), verified: false });
+  });
 });
