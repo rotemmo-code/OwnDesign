@@ -10,16 +10,27 @@ import { type Snap, type SnapIndex, snapPoint } from './snap';
 const c = copy.calibrate;
 const length = ([ax, ay]: Vec, [bx, by]: Vec) => Math.hypot(bx - ax, by - ay);
 const ACCEPTED = ['ok', 'ok-offset', 'other-standard', 'nonstandard'];
+/** A rest that a standard scale explains: accepted at 1:50 or 1:100, or within their tolerance (the fit then offers its button). */
+const STANDARD_REST = ['ok', 'ok-offset', 'other-standard'];
 /**
- * When the dimensions contradict each other: the one whose removal leaves dimensions that a scale explains, or null. A removal counts
- * when the rest is accepted, or fits a standard scale within its tolerance (the fit then offers its button). Any 3 dimensions are
- * explained by some free scale and offset, so "anything but inconsistent" would name several. One such dimension only, at least 4.
+ * When the dimensions contradict each other: the one whose removal leaves dimensions that a standard scale explains, and which that
+ * scale leaves clearly apart: more than twice as far off as the worst of the rest. A rest explained only by a free (nonstandard) scale
+ * never counts: such a scale can absorb a wrong dimension, and so does "anything but inconsistent", since any 3 dimensions fit some
+ * free scale and offset. Only with at least 4 dimensions the fit uses (1 m or more), and only when exactly one removal counts: the
+ * mark must never fall on a correct row. Otherwise null.
  */
 export function oddOne(dims: Dim[], chosen: 50 | 100): number | null {
-  if (dims.length < 4 || fitCalibration(dims, chosen).status !== 'inconsistent') return null;
-  const explained = dims.flatMap((_, i) => {
-    const rest = fitCalibration(dims.filter((_, j) => j !== i), chosen);
-    return rest.unverified || ACCEPTED.includes(rest.status) ? [i] : [];
+  const all = fitCalibration(dims, chosen);
+  if (all.status !== 'inconsistent' || all.used.filter(Boolean).length < 4) return null;
+  const explained = dims.flatMap((dim, i) => {
+    if (!all.used[i]) return [];
+    const rest = dims.filter((_, j) => j !== i);
+    const fit = fitCalibration(rest, chosen);
+    const scale = STANDARD_REST.includes(fit.status) ? fit : fit.status === 'need-more' ? fit.unverified : undefined;
+    if (!scale) return [];
+    const off = (d: Dim) => Math.abs(scale.mmPerPt * length(d.a, d.b) - d.writtenMm - scale.offsetMm);
+    const worst = Math.max(0, ...rest.filter((_, j) => fit.used[j]).map(off));
+    return off(dim) > 3 * worst ? [i] : [];
   });
   return explained.length === 1 ? explained[0] : null;
 }
@@ -188,7 +199,7 @@ export function useCalibrate(index: SnapIndex, plaster: Plaster | null, onPlaste
       {dims.length > 0 && (
         <ol aria-label={c.list}>
           {dims.map((dim, i) => (
-            <li key={i} className={fit.problem?.index === i || odd === i ? 'bad' : undefined}>
+            <li key={i} className={fit.problem?.index === i || odd === i ? 'bad' : undefined} aria-live="polite">
               <span>{c.row(dim.writtenMm, k * length(dim.a, dim.b))}</span>
               {!fit.used[i] && <span> {c.short}</span>}
               {fit.problem?.index === i && <strong> {c.problem[fit.problem.why]}</strong>}

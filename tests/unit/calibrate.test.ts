@@ -48,3 +48,46 @@ describe('oddOne: the one dimension the others do not explain', () => {
     expect(oddOne(set, 50)).toBeNull();
   });
 });
+
+describe('oddOne never marks a correct row', () => {
+  it('a free scale that absorbs the bad dimension does not count: the review case marks nothing', () => {
+    const five = dims([2085, 2091], [1655, 1650], [2572, 2579], [6073, 6144], [2595, 2590]);
+    expect(fitCalibration(five, 50).status).toBe('inconsistent');
+    expect(oddOne(five, 50)).toBeNull();
+  });
+  it('only the dimensions the fit uses count towards four: 640, 400, a wrong 290 and an 80 cm one mark nothing', () => {
+    const set = dims([6400, 6400], [4000, 4000], [2900, 3100], [800, 800]);
+    expect(fitCalibration(set, 50).used.filter(Boolean)).toHaveLength(3);
+    expect(oddOne(set, 50)).toBeNull();
+  });
+  it("the owner's first attempt (155/157.1, 340/342.4, 341/344.1, 198/203.2): the 198 row, as the rule says", () => {
+    expect(oddOne(dims([1571, 1550], [3424, 3400], [3441, 3410], [2032, 1980]), 50)).toBe(3);
+  });
+  it('seeded: one dimension wrong by 3 to 30 cm; whenever a row is marked it is the wrong one', () => {
+    let seed = 20261126;
+    const random = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+    let [inconsistent, marked, wrong] = [0, 0, 0];
+    for (let set = 0; set < 4000; set++) {
+      const scale = set % 2 ? 100 : 50;
+      const k = (scale * 25.4) / 72;
+      const offset = set % 4 < 2 ? 0 : Math.round(-10 + random() * 90);
+      const n = 4 + Math.floor(random() * 3);
+      const bad = Math.floor(random() * n);
+      const set_ = Array.from({ length: n }, (_, i): Dim => {
+        const written = 10 * Math.round(100 + random() * 600); // whole cm, 1 to 7 m
+        const error = i === bad ? (random() < 0.5 ? -1 : 1) * (30 + random() * 270) : 0;
+        const drawn = written + offset + error + (random() * 2 - 1) * 11; // clicks scattered by up to the fit's noise
+        return { a: [0, 20 * i], b: [drawn / k, 20 * i], writtenMm: written };
+      });
+      if (fitCalibration(set_, scale).status !== 'inconsistent') continue;
+      inconsistent++;
+      const odd = oddOne(set_, scale);
+      if (odd === null) continue;
+      marked++;
+      if (odd !== bad) wrong++;
+    }
+    console.log(`seeded: ${inconsistent} inconsistent, ${marked} marked, ${wrong} marked wrongly`);
+    expect(wrong).toBe(0);
+    expect(marked).toBeGreaterThan(0);
+  });
+});
