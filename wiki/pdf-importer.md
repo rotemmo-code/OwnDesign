@@ -15,6 +15,9 @@ measurements. Source: [`../pdf-importer/`](../pdf-importer/README.md).
   PDF/image floor-plan conversion" as not approved. The importer is a course contribution on its own
   branch; merging it into the product needs that decision reconsidered (see
   [open-items](open-items.md)).
+- **Hebrew UI, right to left.** Decided by the user on 2026-11-26: the importer's screens stay in
+  Hebrew for the designer it is built with. This is an exception to the product's English-only UI
+  ([decisions](decisions.md)) and applies to `pdf-importer/` only.
 - **Planned link to the editor:** an export of the recognised plan in the product's plan format
   (walls, openings, rooms, centimetres), so it can be opened in `frontend/editor.html`. Not built.
 

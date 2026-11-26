@@ -107,3 +107,8 @@ history in `3a5b862`. Built so far: safe PDF reading, scale calibration, data mo
 Tests at import: 374 unit, 26 edge, 16 browser tests pass; regression needs private samples. Nothing in
 `frontend/`, `backend/` or `supabase/` changed. Pages: [pdf-importer](pdf-importer.md),
 [open-items](open-items.md), [index](index.md).
+
+## [2026-11-26] decision | PDF importer keeps a Hebrew UI
+The user decided the importer's screens stay in Hebrew, right to left, as an exception to the
+English-only UI, for `pdf-importer/` only. Open item removed. Pages: [pdf-importer](pdf-importer.md),
+[open-items](open-items.md).
