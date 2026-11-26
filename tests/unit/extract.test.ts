@@ -1,7 +1,9 @@
 import type { PDFDocumentLoadingTask, PDFDocumentProxy } from 'pdfjs-dist';
 import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { describe, expect, it, vi } from 'vitest';
+import { MAX_IMAGE_PIXELS } from '../../src/limits';
 import { extractPage, openDocument, summariseColours, type PathItem } from '../../src/pdf/extract';
+import { DRAWING } from '../../src/pdf/render';
 import type { Vec } from '../../src/shared';
 import { bytes, encryptedPdf, onePage, ticks, truncated } from '../fixtures/hostile';
 import { planPdf } from '../fixtures/makePdf';
@@ -140,7 +142,7 @@ describe('layers', () => {
   });
 
   it('a layer that is off is not read', async () => {
-    const { page, paths } = await drawn('/OC /A BDC 0 0 9 9 re f EMC /OC /B BDC 0 0 8 8 re f /OC /A BDC 0 0 8 8 re f EMC EMC 0 0 7 7 re f', {
+    const { page, paths } = await drawn('/OC /A BDC 0 0 9 9 re f EMC /OC /B BDC 0 0 8 8 re f /Span BMC EMC /OC /A BDC 0 0 8 8 re f EMC EMC 0 0 7 7 re f', {
       ...GROUPS,
       catalog: '/OCProperties<</OCGs[5 0 R 6 0 R]/D<</OFF[6 0 R]>>>>',
     });
@@ -322,7 +324,7 @@ describe('forms, groups and clips', () => {
     expect(paths.map(p => [p.fill, p.stroke])).toEqual([[false, true], [true, false]]); // the stroke in the inner group keeps CA 0
   });
 
-  it('a form on a layer that is off, between W and its path, leaves the clip as pdf.js does; elsewhere it leaves nothing behind', async () => {
+  it('a form on a layer that is off leaves nothing behind, between W and its path neither', async () => {
     const after = async (before: string, form: string, group = '') => {
       const { page, paths } = await drawn(`q 1 0 0 1 0 100 cm 0 0 50 50 re ${before} /OC /Off BDC /F Do EMC n /V Do 100 100 50 50 re f 10 10 20 20 re f Q`, {
         resources: '/XObject<</F 5 0 R/V 8 0 R>>/Properties<</Off 6 0 R>>',
@@ -338,11 +340,10 @@ describe('forms, groups and clips', () => {
       return paths.map(p => page.clips[p.clipId].slice(1).map(c => c.rings[0][2])); // the corner of each clip
     };
     for (const group of ['', '/Group<</S/Transparency>>']) {
-      expect(await after('W', '', group)).toEqual([[[50, 250]]]);
-      expect(await after('W', '10 10 15 15 re f', group)).toEqual([[[25, 275]]]); // its path ends the clip
-      expect(await after('W', 'q 10 10 15 15 re f Q', group)).toEqual([[], []]); // its Q drops it
-      expect(await after('W', '10 10 15 15 re f /G Do', group)).toEqual([[[25, 275], [14, 286]]]);
-      expect(await after('', '1 0 0 1 300 0 cm 10 10 15 15 re W n', group)).toEqual([[], []]);
+      for (const form of ['', '10 10 15 15 re f', 'q 10 10 15 15 re f Q', '10 10 15 15 re f /G Do', '1 0 0 1 300 0 cm 10 10 15 15 re W n']) {
+        expect(await after('W', form, group), form).toEqual([[[50, 250]]]); // the page's own path ends the clip
+        expect(await after('', form, group), form).toEqual([[], []]);
+      }
     }
   });
 
@@ -605,4 +606,10 @@ describe('colours', () => {
     expect(hexes([['#ff0000', 2], ['#ff5959', 1]])).toEqual(['#ff0000']); // 0.349
     expect(hexes([['#ff0000', 2], ['#ff5a5a', 1]])).toEqual(['#ff0000', '#ff5a5a']); // 0.353
   });
+});
+
+it('a document that is drawn decodes its images up to MAX_IMAGE_PIXELS and is drawn on this thread', () => {
+  // On pdf.js's own renderer worker the operators would be sent away before operationsFilter could mend them.
+  expect(DRAWING).toMatchObject({ maxImageSize: MAX_IMAGE_PIXELS, disableWorkerRendering: true });
+  expect(Object.keys(DRAWING).sort()).toEqual(['CanvasFactory', 'FilterFactory', 'disableWorkerRendering', 'maxImageSize']);
 });
