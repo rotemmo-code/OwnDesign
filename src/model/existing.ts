@@ -7,9 +7,9 @@ import {
   refuse,
   separatorBoundsMamad,
   separatorEntersMamad,
-  wallBoundsMamad,
   wallEntersMamad,
   wallFits,
+  wallLockedByMamad,
 } from './rules';
 import { CAPS, LIMITS } from './schema';
 import type { Id, Notice, Opening, Project, Pt, Room, RoomChange, State, Wall } from './types';
@@ -33,11 +33,30 @@ const notice = (project: Project, n?: Notice): Change => (n === undefined ? { pr
 const withState = (p: Project, existing: State): Project => ({ ...p, existing });
 const mamadLocked = (fact: boolean) => fact && refuse('mamad-locked');
 
+/** mm: points this close are one point (rooms.ts). */
+const HAIR = 0.03;
+/** The same ring, whatever point it starts from and whichever way round it runs. */
+function sameRing(f: Pt[], g: Pt[]): boolean {
+  if (f.length !== g.length) return false;
+  const start = g.findIndex(q => dist(q, f[0]) <= HAIR);
+  if (start < 0) return false;
+  const n = g.length;
+  return [1, -1].some(step => f.every((p, i) => dist(p, g[(start + step * i + n * n) % n]) <= HAIR));
+}
+const sameRoom = (r: Room, q: Room | undefined) =>
+  !!q && sameRing(r.boundary, q.boundary) && r.holes.length === q.holes.length && r.holes.every(h => q.holes.some(k => sameRing(h, k)));
+
 /**
  * The recompute after a geometric change of the existing state: caps, the changed walls, the rooms, the mamad rules.
- * mustSplit: an added separator that cuts nothing is refused.
+ * mustSplit: an added separator that cuts nothing is refused. mamadMayChange: only rescale, which scales everything;
+ * otherwise the mamad's outline and holes must come out as they were (owner round 8).
  */
-export function rebuildExisting(p: Project, s: State, changed: Id[], mustSplit = false): Change {
+export function rebuildExisting(
+  p: Project,
+  s: State,
+  changed: Id[],
+  { mustSplit = false, mamadMayChange = false }: { mustSplit?: boolean; mamadMayChange?: boolean } = {},
+): Change {
   if (s.walls.length > CAPS.walls || s.separators.length > CAPS.separators) refuse('too-many');
   for (const id of changed) {
     const reason = wallFits(s, s.walls.find(w => w.id === id)!) ?? openingsFit(s, id, []);
@@ -49,6 +68,8 @@ export function rebuildExisting(p: Project, s: State, changed: Id[], mustSplit =
   } catch {
     return refuse('invalid-geometry');
   }
+  const before = s.rooms.find(r => r.isMamad);
+  if (before && !mamadMayChange && !sameRoom(before, out.rooms.find(r => r.id === before.id))) refuse('mamad-locked');
   const order = new Map(s.rooms.map((r, i) => [r.id, i]));
   let rooms = [...out.rooms].sort((x, y) => (order.get(x.id) ?? Infinity) - (order.get(y.id) ?? Infinity));
   let mamad = p.mamad;
@@ -77,7 +98,7 @@ export const existingHandlers: Handlers = {
     locked(p);
     const s = p.existing;
     const w = find(s.walls, a.id);
-    mamadLocked(wallBoundsMamad(s, w.id));
+    mamadLocked(wallLockedByMamad(s, w.id));
     const { [w.id]: _, ...wallClass } = p.wallClass;
     const next = { ...s, walls: s.walls.filter(x => x !== w), openings: s.openings.filter(o => o.wallId !== w.id) };
     return rebuildExisting({ ...p, wallClass }, next, []);
@@ -86,7 +107,7 @@ export const existingHandlers: Handlers = {
     locked(p);
     const s = p.existing;
     const old = find(s.walls, a.id);
-    mamadLocked(wallBoundsMamad(s, old.id));
+    mamadLocked(wallLockedByMamad(s, old.id));
     const w: Wall = {
       ...old,
       a: a.a === undefined ? old.a : pt(a.a),
@@ -107,7 +128,7 @@ export const existingHandlers: Handlers = {
     locked(p);
     const s = p.existing;
     const w = find(s.walls, a.id);
-    mamadLocked(wallBoundsMamad(s, w.id));
+    mamadLocked(wallLockedByMamad(s, w.id));
     const at = num(a.at);
     const l = length(w);
     if (at < LIMITS.wallLength - TOL || l - at < LIMITS.wallLength - TOL) refuse('invalid-geometry');
@@ -115,7 +136,7 @@ export const existingHandlers: Handlers = {
     const second: Wall = { ...w, id: crypto.randomUUID(), a: m };
     const openings = s.openings.map(o => {
       if (o.wallId !== w.id || o.offset + o.width <= at + TOL) return o;
-      return o.offset < at - TOL ? refuse('invalid-geometry') : { ...o, wallId: second.id, offset: o.offset - at };
+      return o.offset < at - TOL ? refuse('invalid-geometry') : { ...o, wallId: second.id, offset: Math.max(0, o.offset - at) };
     });
     const walls = s.walls.flatMap(x => (x === w ? [{ ...w, b: m }, second] : [x]));
     const wallClass = Object.hasOwn(p.wallClass, w.id) ? { ...p.wallClass, [second.id]: p.wallClass[w.id] } : p.wallClass;
@@ -150,7 +171,7 @@ export const existingHandlers: Handlers = {
     locked(p);
     const line = { id: crypto.randomUUID(), a: pt(a.a), b: pt(a.b) };
     mamadLocked(separatorEntersMamad(p.existing, line));
-    return rebuildExisting(p, { ...p.existing, separators: [...p.existing.separators, line] }, [], true);
+    return rebuildExisting(p, { ...p.existing, separators: [...p.existing.separators, line] }, [], { mustSplit: true });
   },
   'x.deleteSeparator': (p, a) => {
     locked(p);
@@ -206,7 +227,7 @@ export const existingHandlers: Handlers = {
     return { project: { ...p, mamad: room, existing: { ...s, rooms } } };
   },
   setName: (p, a) => ({ project: { ...p, name: text(a.name, 1) } }),
-  setPlaster: (p, a) => ({ project: { ...p, plaster: a.plaster } }),
+  setPlaster: (p, a) => ({ project: { ...p, plaster: a.plaster ?? refuse('invalid-action') } }),
   classify: (p, a) => {
     if (![p.existing, p.planned].some(s => s?.walls.some(w => w.id === a.wallId))) refuse('invalid-action');
     const first = a.cls === 'changeable' && !p.changeableWarningShown;
@@ -234,7 +255,7 @@ export const existingHandlers: Handlers = {
       rooms: s.rooms.map(r => ({ ...r, boundary: r.boundary.map(P), holes: r.holes.map(h => h.map(P)) })),
     };
     // finishes are built thicknesses, not drawn ones; archived plans keep their own calibration
-    return rebuildExisting({ ...q, clouds: p.clouds.map(c => ({ ...c, a: P(c.a), b: P(c.b) })) }, scaled, []);
+    return rebuildExisting({ ...q, clouds: p.clouds.map(c => ({ ...c, a: P(c.a), b: P(c.b) })) }, scaled, [], { mamadMayChange: true });
   },
 };
 

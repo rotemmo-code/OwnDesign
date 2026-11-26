@@ -1,4 +1,4 @@
-import { area, contains, dist, intersection, polygon, wallBody } from './geo';
+import { area, contains, dist, intersection, polygon, rings, wallBody } from './geo';
 import { isExterior } from './kind';
 import { roomsOnSide } from './measure';
 import { live } from './rooms';
@@ -45,28 +45,27 @@ export function wallFits(s: State, w: Wall): Reason | null {
 }
 
 const family = (o: Opening) => (o.kind === 'window' ? 'window' : o.kind === 'passage' ? o.id : 'door');
-const span = (list: Opening[]) => {
-  const from = Math.max(...list.map(o => o.offset));
-  const to = Math.min(...list.map(o => o.offset + o.width));
-  return to - from > TOL;
-};
+const shared = (o: Opening, q: Opening) => Math.min(o.offset + o.width, q.offset + q.width) - Math.max(o.offset, q.offset);
 /**
  * Every opening of the wall lies inside it. Openings may not overlap, except on a wall that bounds the mamad, where a
- * mamad's double door or double window shares one opening: two of one family, never three (owner, round 8). Only overlaps
- * that involve a changed opening are judged, so a pair made while the mark stood is kept when the mark is cleared.
+ * mamad's double door or double window shares one opening (owner, round 8): two of one family that share at least half
+ * of the narrower one, and neither overlapping any third. Only overlaps of a changed opening are judged, so a pair made
+ * while the mark stood is kept when the mark is cleared.
  */
 export function openingsFit(s: State, wallId: Id, changed: Id[]): Reason | null {
   const w = s.walls.find(x => x.id === wallId);
   if (!w) return 'invalid-action';
   const list = s.openings.filter(o => o.wallId === wallId);
   if (list.some(o => o.offset < 0 || o.offset + o.width > length(w) + TOL)) return 'opening-out-of-wall';
+  const over = (o: Opening) => list.filter(q => q !== o && shared(o, q) > TOL);
   const mamad = list.some(o => changed.includes(o.id)) && wallBoundsMamad(s, wallId);
-  for (const o of list.filter(x => changed.includes(x.id)))
-    for (const q of list) {
-      if (q === o || !span([o, q])) continue;
-      if (!mamad || family(o) !== family(q)) return 'invalid-geometry';
-      if (list.some(r => r !== o && r !== q && span([o, q, r]))) return 'invalid-geometry';
-    }
+  for (const o of list.filter(x => changed.includes(x.id))) {
+    const others = over(o);
+    if (!others.length) continue;
+    const [q] = others;
+    const double = mamad && others.length === 1 && over(q).length === 1 && family(o) === family(q);
+    if (!double || shared(o, q) < Math.min(o.width, q.width) / 2 - TOL) return 'invalid-geometry';
+  }
   return null;
 }
 
@@ -82,11 +81,25 @@ export function wallBoundsMamad(s: State, wallId: Id): boolean {
   return !!m && (['A', 'B'] as const).some(side => roomsOnSide(s, wallId, side).includes(m.id));
 }
 
-/** The body of w covers more of the mamad's floor than a sliver 0.01 mm deep along its outline. */
+/**
+ * Walls a change may not touch while a room is marked as the mamad. shortcut: every wall that bounds the mamad over any
+ * part of its length; if the owner relaxes it, only the outline guard of rebuildExisting and a split inside the mamad's
+ * face span stay.
+ */
+export const wallLockedByMamad = (s: State, wallId: Id): boolean => wallBoundsMamad(s, wallId);
+
+const toSegment = (p: Pt, a: Pt, b: Pt) => {
+  const l2 = (b.x - a.x) ** 2 + (b.y - a.y) ** 2;
+  const t = l2 ? Math.max(0, Math.min(1, ((p.x - a.x) * (b.x - a.x) + (p.y - a.y) * (b.y - a.y)) / l2)) : 0;
+  return dist(p, { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t });
+};
+const toRings = (region: Pt[][], p: Pt) => Math.min(...region.flatMap(r => r.map((a, i) => toSegment(p, a, r[(i + 1) % r.length]))));
+/** The body of w reaches more than 0.01 mm into the mamad's floor (judged by depth, not area, whatever its length). */
 export function wallEntersMamad(s: State, w: Wall): boolean {
   const m = mamadOf(s);
   if (!m || length(w) < LIMITS.wallLength - TOL) return false;
-  return area(intersection(wallBody(w), polygon(m.boundary, m.holes))) > TOL * (length(w) + w.thickness);
+  const region = [m.boundary, ...m.holes];
+  return rings(intersection(wallBody(w), polygon(m.boundary, m.holes))).some(r => r.some(p => toRings(region, p) > TOL));
 }
 
 /** Length of the line that lies inside the region [outline, ...holes]. */

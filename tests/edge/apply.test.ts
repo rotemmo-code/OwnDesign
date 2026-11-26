@@ -7,7 +7,7 @@ import type { Action, Project, Pt } from '../../src/model/types';
 import { boxProject } from '../fixtures/box';
 
 const RUNS = Number(process.env.ETELIER_RUNS ?? 300);
-const LIMIT = RUNS * 20 + 2000;
+const LIMIT = RUNS * 20;
 const LENGTH = 30;
 
 /** mulberry32: the same sequences on every run. */
@@ -17,13 +17,6 @@ const randomFrom = (seed: number) => () => {
   t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
   return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
 };
-const freeze = <T>(o: T): T => {
-  if (o && typeof o === 'object' && !Object.isFrozen(o)) {
-    Object.values(o).forEach(freeze);
-    Object.freeze(o);
-  }
-  return o;
-};
 const GEOMETRIC = ['x.addWall', 'x.setWall', 'x.deleteWall', 'x.splitWall', 'x.addSeparator', 'x.deleteSeparator', 'rescale'];
 
 /** One action of any type, near the box's faces, with some garbage. */
@@ -32,7 +25,7 @@ function action(p: Project, r: () => number): Action {
   const pick = <T>(l: T[]): T => l[Math.floor(r() * l.length)];
   const whole = (a: number, b: number) => a + Math.floor(r() * (b - a + 1));
   const near = () => pick([0, 100, 200, 3200, 3250, 3300, 6200, 6300, 6400, 2000, 4200, 4300, whole(-500, 7000)]);
-  const P = (): Pt => ({ x: near() + (r() < 0.2 ? r() * 3 : 0), y: near() + (r() < 0.2 ? r() * 3 : 0) });
+  const P = (): Pt => ({ x: near() + (r() < 0.2 ? (r() - 0.5) * 6 : 0), y: near() + (r() < 0.2 ? (r() - 0.5) * 6 : 0) });
   const id = (list: { id: string }[]) => (r() < 0.05 || !list.length ? 'nope' : pick(list).id);
   const n = (v: number) => (r() < 0.03 ? pick([NaN, Infinity, -1, 0, 1e7]) : v);
   const end = () => pick<{ a: Pt }>(s.walls.length ? s.walls : [{ a: P() }]).a;
@@ -96,13 +89,28 @@ it(
   () => {
     const r = randomFrom(42);
     const reached = new Set<string>();
-    for (let seq = 0; seq < Math.max(1, Math.round(RUNS / LENGTH)); seq++) {
-      let p = freeze<Project>({ ...boxProject(), sourceColors: [{ hex: '#808080', label: '' }] });
+    // the first sequences start with one action per reason, so that every reason is reached at any RUNS
+    const seeded: Action[][] = [
+      [
+        { type: 'x.addWall', a: { x: NaN, y: 0 }, b: { x: 1000, y: 0 }, thickness: 100 },
+        { type: 'x.addWall', a: { x: 1000, y: 1000 }, b: { x: 1005, y: 1000 }, thickness: 100 },
+        { type: 'x.addOpening', wallId: 'part', offset: 3500, width: 800, kind: 'door' },
+        { type: 'setName', name: 'x'.repeat(201) },
+        { type: 'x.bogus' } as never,
+        { type: 'setMamad', room: 'room-b' },
+        { type: 'x.setRoom', id: 'room-b', outdoor: true },
+        { type: 'x.deleteWall', id: 'part' },
+      ],
+      [{ type: 'x.deleteWall', id: 'part' }],
+    ];
+    for (let seq = 0; seq < Math.max(seeded.length, Math.round(RUNS / LENGTH)); seq++) {
+      // unfrozen: a mutation of the input must show as a difference, not as a TypeError reported as invalid-action
+      let p: Project = { ...boxProject(), sourceColors: [{ hex: '#808080', label: '' }], ...(seq === 1 ? { approved: true, mamad: 'none' as const } : {}) };
       const h = createHistory(1000);
       h.push(p);
       const trail = [p];
       for (let i = 0; i < LENGTH; i++) {
-        const a = action(p, r);
+        const a = seeded[seq]?.[i] ?? action(p, r);
         const before = structuredClone(p);
         const res = apply(p, a);
         expect(p).toEqual(before);
@@ -119,7 +127,7 @@ it(
           expect(again.changes).toEqual([]);
           expect(again.rooms.map(x => x.id).sort()).toEqual(s.rooms.map(x => x.id).sort());
         }
-        p = freeze(res.project);
+        p = res.project;
         h.push(p);
         trail.push(p);
       }
@@ -128,7 +136,9 @@ it(
       for (let i = 1; i < trail.length; i++) expect(h.redo()).toBe(trail[i]);
       expect(h.redo()).toBe(null);
     }
-    expect(reached.has('ok') && reached.has('invalid-geometry') && reached.has('mamad-locked')).toBe(true);
+    expect([...reached].sort()).toEqual(
+      ['existing-approved', 'invalid-action', 'invalid-geometry', 'invalid-number', 'mamad-locked', 'mamad-outdoor', 'ok', 'opening-out-of-wall', 'text-too-long'],
+    );
   },
   LIMIT,
 );
@@ -141,7 +151,7 @@ it(
     const pick = <T>(l: T[]): T => l[Math.floor(r() * l.length)];
     const types = ['x.addWall', 'x.deleteWall', 'x.setWall', 'x.splitWall', 'x.addOpening', 'x.setOpening', 'x.deleteOpening', 'x.addSeparator', 'x.deleteSeparator', 'x.clearReview', 'x.confirmOpenings', 'x.setRoom', 'x.keepName', 'setMamad', 'setName', 'classify', 'rescale', 'setPlaster', 'n.setColorLabel'];
     const fields = ['a', 'b', 'thickness', 'id', 'at', 'wallId', 'offset', 'width', 'kind', 'ids', 'name', 'inApartment', 'outdoor', 'room', 'part', 'cls', 'calibration', 'plaster', 'hex', 'label'];
-    const p = freeze<Project>({ ...boxProject(), sourceColors: [{ hex: '#808080', label: '' }] });
+    const p: Project = { ...boxProject(), sourceColors: [{ hex: '#808080', label: '' }] };
     const before = structuredClone(p);
     for (let i = 0; i < RUNS * 3; i++) {
       const a: Record<string, unknown> = { type: pick(types) };
