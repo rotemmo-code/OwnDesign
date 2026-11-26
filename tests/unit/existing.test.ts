@@ -422,8 +422,10 @@ it('caps: the 5,001st wall -> too-many within 50 ms; a wall that makes room 1,00
   const p = boxProject();
   const many = Array.from({ length: 4995 }, (_, i) => wall(`z${i}`, 10000 + (i % 70) * 300, 10000 + Math.floor(i / 70) * 300, 10100 + (i % 70) * 300, 10000 + Math.floor(i / 70) * 300, 20));
   const full: Project = { ...p, existing: { ...p.existing, walls: [...p.existing.walls, ...many] } };
-  const t = performance.now();
   expect(why(full, addWall(P(0, 9000), P(1000, 9000)))).toBe('too-many');
+  // the action alone: the helper's deep copy and compare of 5,000 walls is not part of it
+  const t = performance.now();
+  apply(full, addWall(P(0, 9000), P(1000, 9000)));
   expect(performance.now() - t).toBeLessThan(50);
   const lines = Array.from({ length: 1000 }, (_, i) => ({ id: `s${i}`, a: P(-5000 - i, -5000), b: P(-5000 - i, -4000) }));
   expect(why({ ...p, existing: { ...p.existing, separators: lines } }, separator)).toBe('too-many');

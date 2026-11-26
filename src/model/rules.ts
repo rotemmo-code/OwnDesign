@@ -210,7 +210,7 @@ const grow = (b: Box, by: number): Box => ({ x0: b.x0 - by, y0: b.y0 - by, x1: b
  * an end moves only along the wall's own line, thickness kept, every span and joint still covered; no other wall laid
  * along it (judged by what an edit adds, so an overlap a wall already had is no reason to lock it).
  */
-function spanRules(spansOf: (s: State, wallId: Id) => Span[]) {
+function spanRules(spansOf: (s: State, wallId: Id) => Span[], active: (s: State) => boolean = () => true) {
   /** The part of w's body inside o's body over o's guarded spans, when w runs along o (under 15 degrees). */
   const alongShared = (w: Wall, o: Wall, ks: Span[]): { area: number; extent: number } => {
     const none = { area: 0, extent: Infinity };
@@ -240,9 +240,10 @@ function spanRules(spansOf: (s: State, wallId: Id) => Span[]) {
       return onLine(old, w) && along(old, w.a).at <= from + TOL && along(old, w.b).at >= to - TOL;
     },
     lay: (s: State, w: Wall, old?: Wall): boolean => {
+      if (!active(s)) return true;
       const near = grow(boxOf(w), 1);
       return !live(s.walls).some(o => {
-        if (o.id === w.id || !meet(boxOf(o), near)) return false;
+        if (o.id === w.id || !meet(wallBox(o), near)) return false;
         const ks = spansOf(s, o.id);
         if (!ks.length) return false;
         const now = alongShared(w, o, ks);
@@ -255,7 +256,7 @@ function spanRules(spansOf: (s: State, wallId: Id) => Span[]) {
  * What a change may do to a wall while a room is marked as the mamad (owner: only the mamad is locked, not the whole
  * wall); delete is refused exactly for a wall that bounds it.
  */
-export const mamadAllows = spanRules(mamadSpans);
+export const mamadAllows = spanRules(mamadSpans, s => mamadOf(s) !== undefined);
 /** The same for the outer walls while the envelope is locked (8c). */
 export const envelopeAllows = spanRules(envelopeSpans);
 /**
