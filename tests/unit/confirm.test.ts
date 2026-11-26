@@ -217,7 +217,7 @@ it('the guard on its own: an outer wall thickened outward keeps its inside face 
   const p = boxProject();
   const thick = { ...p.existing, walls: p.existing.walls.map(w => (w.id === 'right' ? wall('right', 6350, 200, 6350, 4200, 300) : w)) };
   expect(thrownBy(() => rebuildExisting(p, thick, ['right']))).toEqual(new Refused('envelope-locked'));
-  expect(envelopeKept(p.existing, thick.walls === p.existing.walls ? p.existing : { ...thick, rooms: computeRooms(thick, p.existing.rooms).rooms }, { x0: -1e7, y0: -1e7, x1: 1e7, y1: 1e7 })).toBe(false);
+  expect(envelopeKept(p.existing, thick.walls === p.existing.walls ? p.existing : { ...thick, rooms: computeRooms(thick, p.existing.rooms).rooms })).toBe(false);
   const shaft: [number, number, number, number][] = [[1000, 1000, 1400, 1000], [1400, 1000, 1400, 1400], [1400, 1400, 1000, 1400], [1000, 1400, 1000, 1000]];
   let q = p;
   const answers = shaft.map(([x0, y0, x1, y1]) => {
@@ -305,4 +305,66 @@ it('envelopeAllows on its own: the pre-checks refuse without the guard', () => {
   expect(envelopeAllows.lay(s, wall('n', 6500, 1000, 6500, 2000, 200))).toBe(true);
   expect(envelopeAllows.split(s, 'right', 2000)).toBe(false);
   expect(envelopeAllows.split(s, 'part', 2000)).toBe(true);
+});
+
+// ---- fix round 1 ----
+it('a lining against an outer wall\'s inside face is an ordinary inner edit: added and removed with the envelope locked', () => {
+  const p = boxProject();
+  const linings: Action[] = [
+    { type: 'x.addWall', a: P(1000, 225), b: P(2000, 225), thickness: 50 },
+    { type: 'x.addWall', a: P(6170, 1000), b: P(6170, 3000), thickness: 60 },
+    { type: 'x.addWall', a: P(250, 4150), b: P(1500, 4150), thickness: 100 },
+    { type: 'x.addWall', a: P(4000, 230), b: P(4600, 230), thickness: 60 },
+  ];
+  for (const a of linings) {
+    const q = ok(p, a);
+    const id = q.existing.walls[q.existing.walls.length - 1].id;
+    expect(why(q, { type: 'x.deleteWall', id })).toBe('ok');
+    expect(why(q, { type: 'x.setWall', id, thickness: 40 })).toBe('ok');
+  }
+});
+
+it('behind a lining the outer wall itself stays locked', () => {
+  const q = ok(ok(boxProject(), { type: 'x.releaseOpenings', ids: ['window'] }), { type: 'x.addWall', a: P(1000, 225), b: P(2000, 225), thickness: 50 });
+  expect(why(q, { type: 'x.deleteWall', id: 'top' })).toBe('envelope-locked');
+  expect(why(q, { type: 'x.setWall', id: 'top', thickness: 220 })).toBe('envelope-locked');
+  expect(why(q, { type: 'x.setWall', id: 'top', a: P(0, 105) })).toBe('envelope-locked');
+  expect(why(q, { type: 'x.splitWall', id: 'top', at: 1500 })).toBe('envelope-locked');
+});
+
+it('a lining inside the mamad is an inner wall in the mamad; one on the neighbour\'s side of a mamad wall is fine', () => {
+  const a = ok(boxProject(), { type: 'setMamad', room: 'room-a' });
+  expect(why(a, { type: 'x.addWall', a: P(1000, 225), b: P(2000, 225), thickness: 50 })).toBe('mamad-locked');
+  const b = ok(boxProject(), { type: 'setMamad', room: 'room-b' });
+  const q = ok(b, { type: 'x.addWall', a: P(3175, 1000), b: P(3175, 2000), thickness: 50 });
+  expect(why(q, { type: 'x.deleteWall', id: q.existing.walls[5].id })).toBe('ok');
+});
+
+it('apply refuses a wall laid along an outer wall\'s body, added or moved there (the pre-check is the only protection)', () => {
+  const p = boxProject();
+  expect(why(p, { type: 'x.addWall', a: P(1000, 0), b: P(2000, 0), thickness: 200 })).toBe('envelope-locked');
+  expect(why(p, { type: 'x.addWall', a: P(6300, 1000), b: P(6300, 2000), thickness: 100 })).toBe('envelope-locked');
+  const far = ok(p, { type: 'x.addWall', a: P(1000, -1500), b: P(2000, -1500), thickness: 200 });
+  const id = far.existing.walls[5].id;
+  expect(why(far, { type: 'x.setWall', id, a: P(1000, 0), b: P(2000, 0) })).toBe('envelope-locked');
+  expect(why(freeEnvelope(far), { type: 'x.setWall', id, a: P(1000, 0), b: P(2000, 0) })).toBe('ok');
+  const rel = ok(p, { type: 'x.releaseOpenings', ids: ['window'] });
+  expect(why(rel, { type: 'x.splitWall', id: 'top', at: 1500 })).toBe('envelope-locked');
+  expect(why(rel, { type: 'x.setWall', id: 'top', a: P(150, 100) })).toBe('envelope-locked');
+});
+
+it('the outer leaf: a wall with no indoor room beside it laid against the facade is locked with the envelope', () => {
+  const p = boxProject();
+  const leaf = ok(p, { type: 'x.addWall', a: P(1000, -25), b: P(2000, -25), thickness: 50 });
+  const id = leaf.existing.walls[5].id;
+  const edits: Action[] = [
+    { type: 'x.deleteWall', id },
+    { type: 'x.setWall', id, thickness: 40 },
+    { type: 'x.setWall', id, a: P(500, -25) },
+    { type: 'x.splitWall', id, at: 500 },
+  ];
+  expect(edits.map(a => why(leaf, a))).toEqual(edits.map(() => 'envelope-locked'));
+  expect(edits.map(a => why(freeEnvelope(leaf), a))).toEqual(edits.map(() => 'ok'));
+  const away = ok(p, { type: 'x.addWall', a: P(1000, -500), b: P(2000, -500), thickness: 50 });
+  expect(why(away, { type: 'x.deleteWall', id: away.existing.walls[5].id })).toBe('ok');
 });

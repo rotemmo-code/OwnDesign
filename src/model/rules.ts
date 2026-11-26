@@ -30,6 +30,11 @@ const boxOf = (w: Wall): Box => {
   const h = w.thickness / 2;
   return { x0: Math.min(w.a.x, w.b.x) - h, x1: Math.max(w.a.x, w.b.x) + h, y0: Math.min(w.a.y, w.b.y) - h, y1: Math.max(w.a.y, w.b.y) + h };
 };
+// the boxes are asked for again and again while the envelope is compared; walls and rooms are never changed in place
+const wallBoxes = new WeakMap<Wall, Box>();
+const wallBox = (w: Wall): Box => wallBoxes.get(w) ?? (wallBoxes.set(w, boxOf(w)), wallBoxes.get(w)!);
+const roomBoxes = new WeakMap<Room, Box>();
+const roomBox = (r: Room): Box => roomBoxes.get(r) ?? (roomBoxes.set(r, ringBox(r.boundary)), roomBoxes.get(r)!);
 const meet = (a: Box, b: Box) => a.x0 <= b.x1 && b.x0 <= a.x1 && a.y0 <= b.y1 && b.y0 <= a.y1;
 
 /** Length, thickness, and not lying on another wall. */
@@ -155,39 +160,45 @@ export function envelopeSpans(s: State, wallId: Id): Span[] {
   const w = live(s.walls).find(x => x.id === wallId);
   if (!w) return [];
   const rooms = new Map(s.rooms.map(r => [r.id, r]));
-  const sides = (['A', 'B'] as const).map(side => faces(s, wallId, side));
+  // faces reads only the rooms on the wall and the walls within 2 m; a local state gives the same answer, cheaper
+  const box = boxOf(w);
+  const [far, close] = [grow(box, 2000), grow(box, 1)];
+  const local: State = { ...s, walls: s.walls.filter(o => meet(wallBox(o), far)), rooms: s.rooms.filter(r => meet(roomBox(r), close)) };
+  const sides = (['A', 'B'] as const).map(side => faces(local, wallId, side));
   const cover = (k: 0 | 1, test: (r: Room) => boolean) => merge(sides[k].filter(f => test(rooms.get(f.room)!)).map((f): Interval => [f.from, f.to]));
   // where another wall of the apartment (one with an indoor room beside it) lies against a face, that face is walled,
   // not open to the outside: a T-joint, an L of two walls. A neighbour's wall laid back to back does not count.
   const u = { x: (w.b.x - w.a.x) / length(w), y: (w.b.y - w.a.y) / length(w) };
   const n = normalA(u);
-  const walled = (k: 0 | 1): Interval[] => {
+  const against = (k: 0 | 1): { all: Interval[]; lining: Interval[] } => {
     const by = (k ? -1 : 1) * (w.thickness / 2 + 0.5);
     const c = (t: number) => ({ x: w.a.x + u.x * t + n.x * by, y: w.a.y + u.y * t + n.y * by });
     const strip = polygon(corners(c(-500), c(length(w) + 500), 1));
     const near = grow(ringBox(corners(c(-500), c(length(w) + 500), 1)), 1);
-    return merge(
-      live(s.walls)
-        .filter(o => o.id !== w.id && meet(boxOf(o), near))
-        .filter(o => (['A', 'B'] as const).some(side => roomsOnSide(s, o.id, side).some(id => (rooms.get(id) ? isInside(rooms.get(id)!) : false))))
-        .flatMap((o): Interval[] => {
-          const ats = rings(intersection(strip, wallBody(o))).flat().map(q => along(w, q).at);
-          return ats.length ? [[Math.min(...ats), Math.max(...ats)]] : [];
-        }),
-    );
+    const found = live(local.walls)
+      .filter(o => o.id !== w.id && meet(boxOf(o), near))
+      .filter(o => (['A', 'B'] as const).some(side => roomsOnSide(s, o.id, side).some(id => (rooms.get(id) ? isInside(rooms.get(id)!) : false))))
+      .flatMap(o => {
+        const ats = rings(intersection(strip, wallBody(o))).flat().map(q => along(w, q).at);
+        const l = length(o);
+        const parallel = Math.abs(((o.b.x - o.a.x) * u.y - (o.b.y - o.a.y) * u.x) / l) < LEAST_SINE;
+        return ats.length ? [{ at: [Math.min(...ats), Math.max(...ats)] as Interval, parallel }] : [];
+      });
+    return { all: merge(found.map(f => f.at)), lining: merge(found.filter(f => f.parallel).map(f => f.at)) };
   };
   const [inA, inB] = [cover(0, isInside), cover(1, isInside)];
   const outdoor = (r: Room) => r.outdoor;
-  // walled is costly: only where one face is indoor and the other is not
+  // the walls against a face are costly to find: only where one face is indoor and the other is not. A lining on the
+  // indoor face (a wall along it) keeps that stretch indoor; any apartment wall against the other face walls it.
   const open = (mine: Interval[], other: Interval[], k: 0 | 1) => {
-    const left = minus(mine, other);
-    return left.length ? minus(left, walled(k)) : left;
+    if (!minus(mine, other).length) return [];
+    return minus(merge([...mine, ...against(k).lining]), merge([...other, ...against(k ? 0 : 1).all]));
   };
-  return merge([...open(inA, inB, 1), ...open(inB, inA, 0), ...cover(0, outdoor), ...cover(1, outdoor)])
+  return merge([...open(inA, inB, 0), ...open(inB, inA, 1), ...cover(0, outdoor), ...cover(1, outdoor)])
     // a face piece may run on past the wall's own end into a joint; the wall's span ends with the wall
     .map(([f, t]): Interval => [Math.max(0, f), Math.min(length(w), t)])
     .filter(([f, t]) => t - f >= LEAST_EDGE)
-    .map(([f, t]) => spanOf(s, w, f, t));
+    .map(([f, t]) => spanOf(local, w, f, t));
 }
 
 /** The span with the corner joints at both ends, within the wall. */
@@ -247,6 +258,15 @@ function spanRules(spansOf: (s: State, wallId: Id) => Span[]) {
 export const mamadAllows = spanRules(mamadSpans);
 /** The same for the outer walls while the envelope is locked (8c). */
 export const envelopeAllows = spanRules(envelopeSpans);
+/**
+ * The facade's outer leaf (8c): a wall with no indoor room on either face that lies against an outer wall, within
+ * 2.01 mm along its outer stretches. While the envelope is locked it is locked too.
+ */
+export function envelopeLeaf(s: State, w: Wall): boolean {
+  const rooms = new Map(s.rooms.map(r => [r.id, r]));
+  if ((['A', 'B'] as const).some(side => roomsOnSide(s, w.id, side).some(id => isInside(rooms.get(id)!)))) return false;
+  return !envelopeAllows.lay(s, { ...w, thickness: w.thickness + 2 * TOUCH });
+}
 const boundingWalls = (s: State): Wall[] => {
   const m = mamadOf(s);
   if (!m) return [];
@@ -336,16 +356,28 @@ export function separatorBoundsMamad(s: State, separatorId: Id): boolean {
 }
 
 /**
- * The envelope is unchanged around a change (8c): near it, every outer stretch of one state lies on a wall of the same
- * line and thickness whose outer stretches, with their corner joints, cover it in the other state. Both ways, so that no
- * outer wall is moved, thickened or lost, and no inner wall becomes an outer one.
+ * The envelope is unchanged by a change (8c): every outer stretch of one state lies on a wall of the same line and
+ * thickness whose outer stretches, with their corner joints, cover it in the other state. Both ways, so that no outer
+ * wall is moved, thickened or lost, and no inner wall becomes an outer one. Only walls whose stretches can differ are
+ * compared: those touching a changed wall or separator (their joints may change) and those beside a changed room.
  */
-export function envelopeKept(before: State, after: State, near: Box): boolean {
-  const spans = (s: State) =>
+export function envelopeKept(before: State, after: State): boolean {
+  const changed = [
+    ...before.walls.filter(w => !after.walls.includes(w)),
+    ...after.walls.filter(w => !before.walls.includes(w)),
+  ].map(boxOf);
+  const lines = [...before.separators.filter(x => !after.separators.includes(x)), ...after.separators.filter(x => !before.separators.includes(x))];
+  changed.push(...lines.map(x => ringBox([x.a, x.b])));
+  const same = (r: Room, list: Room[]) =>
+    list.some(q => q.id === r.id && q.inApartment === r.inApartment && q.outdoor === r.outdoor && sameRings(r, q));
+  const rooms = [...before.rooms.filter(r => !same(r, after.rooms)), ...after.rooms.filter(r => !same(r, before.rooms))].map(r => grow(ringBox(r.boundary), 1));
+  // joints reach 5.01 mm between ends, a little more where a wall passes one: 10 mm is enough around a changed wall
+  const near = [...changed.map(b => grow(b, 10)), ...rooms];
+  const pick = (s: State) =>
     live(s.walls)
-      .filter(w => meet(boxOf(w), near))
+      .filter(w => near.some(b => meet(boxOf(w), b)))
       .map(w => ({ w, ks: envelopeSpans(s, w.id) }));
-  const [b, a] = [spans(before), spans(after)];
+  const [b, a] = [pick(before), pick(after)];
   const covered = ({ w, ks }: { w: Wall; ks: Span[] }, other: { w: Wall; ks: Span[] }[]) => {
     const cover = merge(
       other
@@ -356,19 +388,14 @@ export function envelopeKept(before: State, after: State, near: Box): boolean {
   };
   return b.every(x => covered(x, a)) && a.every(x => covered(x, b));
 }
-/** The box of what differs between two states (walls, separators, and the rooms around them), grown by 2 m. */
-export function changedBox(before: State, after: State, rooms: Room[] = []): Box {
-  const boxes = [
-    ...before.walls.filter(w => !after.walls.includes(w)),
-    ...after.walls.filter(w => !before.walls.includes(w)),
-  ].map(boxOf);
-  const lines = [...before.separators.filter(x => !after.separators.includes(x)), ...after.separators.filter(x => !before.separators.includes(x))];
-  boxes.push(...lines.map(x => ringBox([x.a, x.b])), ...rooms.map(r => ringBox(r.boundary)));
-  if (!boxes.length) return { x0: 0, y0: 0, x1: -1, y1: -1 };
-  const base = boxes.reduce((u, x) => ({ x0: Math.min(u.x0, x.x0), y0: Math.min(u.y0, x.y0), x1: Math.max(u.x1, x.x1), y1: Math.max(u.y1, x.y1) }));
-  const touched = [...before.rooms, ...after.rooms].map(r => ringBox(r.boundary)).filter(x => meet(x, base));
-  return grow(touched.reduce((u, x) => ({ x0: Math.min(u.x0, x.x0), y0: Math.min(u.y0, x.y0), x1: Math.max(u.x1, x.x1), y1: Math.max(u.y1, x.y1) }), base), 2000);
-}
+const HAIR = 0.03;
+/** The same outline and holes, point for point (computeRooms writes them in one order). */
+const sameRings = (r: Room, q: Room) =>
+  [r.boundary, ...r.holes].length === [q.boundary, ...q.holes].length &&
+  [r.boundary, ...r.holes].every((ring, i) => {
+    const other = i ? q.holes[i - 1] : q.boundary;
+    return ring.length === other.length && ring.every((p, k) => dist(p, other[k]) <= HAIR);
+  });
 const ringBox = (ring: Pt[]): Box => ({
   x0: Math.min(...ring.map(q => q.x)),
   y0: Math.min(...ring.map(q => q.y)),

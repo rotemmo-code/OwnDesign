@@ -18,7 +18,6 @@ const randomFrom = (seed: number) => () => {
   t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
   return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
 };
-const EVERYWHERE = { x0: -1e7, y0: -1e7, x1: 1e7, y1: 1e7 };
 /** Where an opening starts and ends on the page, to 0.01 mm. */
 const place = (s: { walls: { id: string; a: Pt; b: Pt }[] }, o: { wallId: string; offset: number; width: number }) => {
   const w = s.walls.find(x => x.id === o.wallId)!;
@@ -147,13 +146,13 @@ it(
           expect(now.holes.length).toBe(ring.holes.length);
         }
         if (a.type.startsWith('x.')) {
-          // 8c: locked openings keep their place, and a locked envelope its outer stretches
+          // 8c: locked openings keep their place, and a locked envelope its outer stretches (every wall compared: copies)
           for (const o of p.existing.openings.filter(x => openingLock(p.existing, x))) {
             const now = res.project.existing.openings.find(x => x.id === o.id);
             expect(now && [now.kind, now.width], JSON.stringify(a)).toEqual([o.kind, o.width]);
             expect(place(res.project.existing, now!), JSON.stringify(a)).toEqual(place(p.existing, o));
           }
-          if (p.envelope !== 'released') expect(envelopeKept(p.existing, res.project.existing, EVERYWHERE), JSON.stringify(a)).toBe(true);
+          if (p.envelope !== 'released') expect(envelopeKept({ ...p.existing, walls: p.existing.walls.map(w => ({ ...w })) }, res.project.existing), JSON.stringify(a)).toBe(true);
         }
         const parsed = ProjectSchema.safeParse(res.project);
         expect(parsed.success, `${JSON.stringify(a)}: ${parsed.error?.issues[0]?.message}`).toBe(true);
