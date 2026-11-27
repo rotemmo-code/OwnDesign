@@ -55,8 +55,9 @@ export async function drawPage(
   const { OPS, AnnotationMode } = pdfjs;
   try {
     const fits = Math.min(scale, Math.sqrt(MAX_IMAGE_PIXELS / (width * height)));
-    // at the cap, down: rounding up both sides could pass MAX_IMAGE_PIXELS by a row (seen at 2400 x 1500 at density 3)
-    const whole = fits < scale ? Math.floor : Math.round;
+    // two sides rounded up can pass MAX_IMAGE_PIXELS by a row (seen at 2400 x 1500 at density 3): then both go down
+    const over = Math.round(width * fits) * Math.round(height * fits) > MAX_IMAGE_PIXELS;
+    const whole = over ? Math.floor : Math.round;
     const canvas = new OffscreenCanvas(Math.max(1, whole(width * fits)), Math.max(1, whole(height * fits)));
     const layerOf = layerTracker(pdfjs, await doc.getOptionalContentConfig());
     const evenOdds = [OPS.eoFill, OPS.eoFillStroke, OPS.closeEOFillStroke];
