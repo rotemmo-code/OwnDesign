@@ -21,8 +21,10 @@ Work in progress. Built and reviewed so far:
 | Every edit of the existing state through one checked transition, with reasons for refusals, locks by default (windows, entry door, outer walls, mamad) with deliberate release, and undo | `src/model/apply.ts`, `existing.ts`, `rules.ts`, `history.ts` |
 | Finish layers (plaster or cladding) per wall side and free wall end, and the room that is left (net) | `src/model/finish.ts` |
 | Project file (open, save, download) and autosave draft in the browser | `src/storage/` |
+| Editor screen, part 1: draw walls by their centre line with a typed thickness, wall material, rooms with name and area, paint and legend per wall kind and class, locks with a note and a deliberate release, undo and redo, one view-reset control | `src/editor/Editor.tsx`, `Tools.tsx`, `Overlay.tsx`, `SidePanel.tsx`, `Legend.tsx`, `useProject.ts` |
 
-Not built yet: the editor screen, the save buttons, wall detection, the planned state, PDF output.
+Not built yet: doors, windows and finishes in the editor, the guided check before approval, the save buttons,
+wall detection, the planned state, PDF output.
 Scanned (image-only) PDFs are out of scope for this version.
 
 ## Run
