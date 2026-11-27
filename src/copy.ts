@@ -150,6 +150,8 @@ export const copy = {
     confirm: 'אישור',
     envelopeOpen: 'קירות החוץ פתוחים לתיקון. כשתסיימו, לחצו "אישור".',
     mamadOpen: (name: string) => `סימון הממ"ד בוטל לתיקון. כשתסיימו, לחצו "אישור" כדי לסמן שוב את ${name} כממ"ד.`,
+    /** Owner R18: the mark does not move while a mamad is marked and locked. */
+    mamadTaken: 'הממ"ד כבר מסומן, והוא נעול. כדי לסמן חלל אחר, לחצו על קיר של הממ"ד ואז על "תיקון".',
     mamadChanged: 'החלל שהיה הממ"ד השתנה. סמנו את הממ"ד מחדש: בחרו את החלל וסמנו "זה הממ"ד".',
     room: 'חלל',
     roomName: 'שם החלל',

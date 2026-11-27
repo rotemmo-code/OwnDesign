@@ -110,8 +110,18 @@ function RoomDetails({ c, id, plaster, onFix }: { c: EditorCtx; id: Id; plaster:
         <input type="checkbox" checked={room.outdoor} onChange={event => c.run({ type: 'x.setRoom', id, outdoor: event.target.checked })} /> {e.outdoor}
       </label>
       <label>
-        {/* taking the mark back is the mamad's "תיקון" (owner R14): its row with "אישור" follows */}
-        <input type="checkbox" checked={room.isMamad} onChange={event => (event.target.checked ? c.run({ type: 'setMamad', room: id }) : onFix('mamad'))} /> {e.isMamad}
+        {/* taking the mark back is the mamad's "תיקון" (owner R14); while another room is the mamad the mark does not move (R18);
+            with none marked, a tick is the "אישור" for this room (R19) */}
+        <input
+          type="checkbox"
+          checked={room.isMamad}
+          onChange={event =>
+            !event.target.checked ? onFix('mamad')
+            : c.project.existing.rooms.some(r => r.isMamad) ? c.say(e.mamadTaken)
+            : c.run({ type: 'setMamad', room: id })
+          }
+        />{' '}
+        {e.isMamad}
       </label>
       <p data-testid="measurement">
         <strong>{e.area(formatM2(m.areaMm2))}</strong> {copy.byDrawing}

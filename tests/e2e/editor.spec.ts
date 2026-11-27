@@ -942,3 +942,32 @@ test('no release row where she never released: mark, תיקון, אישור, the
   await expect(page.locator('[data-wall]').nth(4)).not.toHaveAttribute('fill', COLOR.mamad);
   await expect(mamadRow(page)).toHaveCount(0);
 });
+
+test('while a mamad is marked, ticking another room changes nothing and says how to change it (owner R18)', async ({ page }) => {
+  await start(page);
+  await withMamad(page);
+  const left = await room(page, [1700, 2200]);
+  await left.getByLabel(e.isMamad).check({ force: true }).catch(() => {}); // the box springs back: nothing changed
+  await expect(message(page)).toHaveText(e.mamadTaken);
+  await expect(message(page)).toHaveAttribute('aria-live', 'polite');
+  await expect(left.getByLabel(e.isMamad)).not.toBeChecked();
+  await expect(page.locator('[data-wall]').nth(3)).toHaveAttribute('fill', COLOR.mamad); // the right room's wall
+  await expect(page.locator('[data-wall]').nth(1)).toHaveAttribute('fill', COLOR.exterior); // the left room's wall
+});
+
+test('after תיקון, ticking a room as the mamad is the אישור, for the same room or another (owner R19)', async ({ page }) => {
+  await start(page);
+  await withMamad(page);
+  await (await wall(page, [3250, 3000])).getByRole('button', { name: e.fix }).click();
+  await expect(mamadRow(page)).toBeVisible();
+  const right = await room(page, [4700, 2200]);
+  await right.getByLabel(e.isMamad).check();
+  await expect(mamadRow(page)).toHaveCount(0);
+  await expect(page.locator('[data-wall]').nth(3)).toHaveAttribute('fill', COLOR.mamad);
+  await (await wall(page, [3250, 3000])).getByRole('button', { name: e.fix }).click();
+  const left = await room(page, [1700, 2200]);
+  await left.getByLabel(e.isMamad).check();
+  await expect(mamadRow(page)).toHaveCount(0);
+  await expect(page.locator('[data-wall]').nth(1)).toHaveAttribute('fill', COLOR.mamad);
+  await expect(page.locator('[data-wall]').nth(3)).toHaveAttribute('fill', COLOR.exterior);
+});
