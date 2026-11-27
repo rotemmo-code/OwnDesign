@@ -897,3 +897,36 @@ test('Enter keeps the focus in a name field; a refused thickness goes back to th
   await page.keyboard.press('Control+z');
   await expect(message(page)).toHaveText('');
 });
+
+// ---- fix round 2 ----
+test('an undo of a merge takes its question away; the rooms keep their names', async ({ page }) => {
+  await start(page);
+  await twoRooms(page);
+  await page.getByRole('button', { name: e.part(1, '12.00') }).click();
+  await tool(page, e.remove);
+  await clickMm(page, [3250, 3000]);
+  await expect(page.getByText(/התאחדו לחלל אחד/)).toBeVisible();
+  await page.keyboard.press('Control+z');
+  await expect(page.locator('[data-room]')).toHaveCount(2);
+  await expect(page.getByText(/התאחדו לחלל אחד/)).toHaveCount(0);
+  await expect(page.locator('[data-room]').filter({ hasText: 'סלון' })).toHaveCount(1);
+});
+
+test('renaming the project leaves the load-bearing warning and a gone room\'s sentence on screen', async ({ page }) => {
+  await start(page);
+  await drawFive(page, 4);
+  const first = await wall(page, [3000, 100]);
+  await first.getByRole('button', { name: e.classes.changeable }).click();
+  await expect(message(page)).toHaveText(e.loadBearing);
+  await page.getByLabel(e.name).fill('בית אחר');
+  await page.getByLabel(e.name).press('Enter');
+  await page.waitForTimeout(300);
+  await expect(message(page)).toHaveText(e.loadBearing);
+  await tool(page, e.remove);
+  await clickMm(page, [100, 3000]);
+  await expect(message(page)).toHaveText(e.gone(e.unnamed));
+  await page.getByLabel(e.name).fill('בית שלישי');
+  await page.getByLabel(e.name).press('Enter');
+  await page.waitForTimeout(300);
+  await expect(message(page)).toHaveText(e.gone(e.unnamed));
+});

@@ -27,19 +27,23 @@ export function useEditor({ store, page, plaster, measure, ptPerPx }: { store: S
   const project = store.project;
   const k = project?.calibration.mmPerPt ?? 1;
   const derived = useMemo(() => project && derive(project), [project?.existing, project?.envelope, project?.wallClass]);
-  // what the editor's own last action made; any other change (undo, redo, a load) leaves no message or question behind
+  // The drawing as the editor's own last action left it. When the drawing changes otherwise (undo, redo, a rescale, a load) its
+  // message and a question about rooms no longer there go; a rename or a plaster answer leaves the drawing and the message alone.
   const ran = useRef<unknown>(null);
+  const drawing = project?.existing;
   useEffect(() => {
-    if (!project || project === ran.current) return;
+    if (!drawing || drawing === ran.current) return;
     setMessage('');
-    const rooms = new Set(project.existing.rooms.map(r => r.id));
-    setQuestion(q => (q && rooms.has(q.room) && (q.type === 'merge' || q.parts.every(part => rooms.has(part))) ? q : null));
-  }, [project]);
+    const rooms = new Set(drawing.rooms.map(r => r.id));
+    // a split asks about all its parts; a merge only while the rooms it merged are gone again
+    const holds = (q: Question) => rooms.has(q.room) && (q.type === 'split' ? q.parts.every(id => rooms.has(id)) : q.from.every(id => id === q.room || !rooms.has(id)));
+    setQuestion(q => (q && holds(q) ? q : null));
+  }, [drawing]);
 
   const run = (a: Action): Result => {
     const before = store.project!;
     const r = store.dispatch(a);
-    if (r.ok) ran.current = r.project;
+    if (r.ok) ran.current = r.project.existing;
     if (!r.ok) {
       setMessage(copy.reason[r.reason] ?? e.reasonOther);
       return r;
@@ -50,7 +54,7 @@ export function useEditor({ store, page, plaster, measure, ptPerPx }: { store: S
     const [merge] = events.merge;
     // the answer to a question closes it; any other accepted edit closes it too, and the larger part keeps the name
     if (split) setQuestion({ type: 'split', room: split.room, parts: split.parts, name: name(split.room) });
-    else if (merge) setQuestion({ type: 'merge', room: merge.room, names: merge.from.map(name).join(', ') });
+    else if (merge) setQuestion({ type: 'merge', room: merge.room, from: merge.from, names: merge.from.map(name).join(', ') });
     else setQuestion(null);
     setMessage(
       events.gone.length ? e.gone(events.gone.map(x => x.name || e.unnamed).join(', '))

@@ -10,7 +10,7 @@ import type { EditorCtx, Selected } from './Tools';
 
 const e = copy.editor;
 
-export type Question = { type: 'split'; room: Id; parts: Id[]; name: string } | { type: 'merge'; room: Id; names: string };
+export type Question = { type: 'split'; room: Id; parts: Id[]; name: string } | { type: 'merge'; room: Id; from: Id[]; names: string };
 
 /**
  * A text field that takes what is typed on Enter or on leaving it. It keeps the focus; what is refused goes back to the
