@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Clip, ExtractedPage, PathItem } from '../../src/pdf/extract';
 import type { Vec } from '../../src/shared';
-import { snapIndex, snapPoint } from '../../src/editor/snap';
+import { holdAxis, pickAt, secondEnd, snapCentre, snapIndex, snapPoint } from '../../src/editor/snap';
 
 // Synthetic pages in view points: 842 x 595 unless a test says otherwise.
 const stroke = (pts: Vec[], more: Partial<PathItem> = {}): PathItem => ({
@@ -131,5 +131,74 @@ describe('speed', () => {
     const found = snapPoint([410, 410], index, 11.2);
     expect(performance.now() - start).toBeLessThan(200);
     expect(found.to).not.toBeNull();
+  });
+});
+
+describe('the wall tool: snapCentre, holdAxis and pickAt', () => {
+  // 1:50: 17.64 mm per point. A wall 10 pt thick (176 mm) from x 100 to 300 at y 100..110, and a hatch of short diagonals in it.
+  const K = (50 * 25.4) / 72;
+  const wall = rect(100, 100, 300, 110);
+  const centre = (page: ExtractedPage, p: Vec, ends: Vec[] = [], between = true) => snapCentre(p, snapIndex(page), 5, K, ends, between);
+  it('the middle of the edge that closes a wall\'s end, not a corner of it', () => {
+    expect(centre(pageOf([wall]), [101, 104])).toEqual({ at: [100, 105], to: 'end' });
+    expect(centre(pageOf([wall]), [299, 109])).toEqual({ at: [300, 105], to: 'end' });
+  });
+  it('an edge is a wall\'s end only with both faces leaving it square and to one side, 30 to 600 mm long', () => {
+    expect(centre(pageOf([stroke([[100, 100], [100, 110]])]), [101, 104]).to).not.toBe('end'); // no faces
+    expect(centre(pageOf([rect(100, 100, 300, 101)]), [101, 100.4], [], false).to).toBeNull(); // 17.6 mm: too thin for a wall
+    expect(centre(pageOf([filled([[100, 100], [100, 110], [300, 140]])]), [100.5, 105], [], false).to).toBeNull(); // the sides are not square
+  });
+  it('at a corner, where the end edge also lies on the face of another wall, it is still the end', () => {
+    const corner = pageOf([rect(100, 100, 300, 110), rect(100, 110, 110, 300)]);
+    expect(centre(corner, [106, 111])).toEqual({ at: [105, 110], to: 'end' });
+  });
+  it('midway between a wall\'s two faces, moving across the wall only', () => {
+    expect(centre(pageOf([wall]), [200, 103])).toEqual({ at: [200, 105], to: 'between' });
+    expect(centre(pageOf([wall]), [200, 103], [], false)).toEqual({ at: [200, 103], to: null });
+  });
+  it('the closest pair of faces: a wall inside a wide one is taken, not the wide one', () => {
+    const page = pageOf([rect(100, 100, 300, 110), stroke([[100, 90], [300, 90]]), stroke([[100, 130], [300, 130]])]);
+    expect(centre(page, [200, 104])).toEqual({ at: [200, 105], to: 'between' });
+  });
+  it('never a point on a face; nothing near: the point itself', () => {
+    expect(centre(pageOf([wall]), [200, 100.5]).at[1]).toBe(105);
+    expect(centre(pageOf([wall]), [200, 400])).toEqual({ at: [200, 400], to: null });
+  });
+  it('the centre-line end of a wall already drawn comes first', () => {
+    expect(centre(pageOf([wall]), [101, 104], [[102, 105]])).toEqual({ at: [102, 105], to: 'wall' });
+  });
+  it('midway between two near-vertical faces that lean apart by a hair, as drawings have them', () => {
+    const noisy = pageOf([filled([[100, 100], [110, 100], [110.01, 300], [99.99, 300]])]);
+    expect(centre(noisy, [103, 200])).toEqual({ at: [expect.closeTo(105, 6), expect.closeTo(200, 3)], to: 'between' });
+    const exact = pageOf([rect(100, 100, 110, 300)]);
+    expect(centre(exact, [103, 200])).toEqual({ at: [105, 200], to: 'between' });
+  });
+  it('secondEnd: a snapped point is kept as it is; only a free point is held to an axis', () => {
+    const tan = Math.tan(Math.PI / 180);
+    expect(secondEnd([0, 0], { at: [170, 170 * tan], to: 'wall' })).toEqual([170, 170 * tan]);
+    expect(secondEnd([0, 0], { at: [170, 170 * tan], to: 'end' })).toEqual([170, 170 * tan]);
+    expect(secondEnd([0, 0], { at: [170, 170 * tan], to: 'between' })).toEqual([170, 170 * tan]);
+    expect(secondEnd([0, 0], { at: [170, 170 * tan], to: null })).toEqual([170, 0]);
+  });
+  it('holdAxis: within 2 degrees of the horizontal or vertical through the first end, held to it; beyond, kept', () => {
+    const tan = (deg: number) => Math.tan((deg * Math.PI) / 180);
+    expect(holdAxis([0, 0], [100, 100 * tan(1.9)])).toEqual([100, 0]);
+    expect(holdAxis([0, 0], [100 * tan(1.9), -100])).toEqual([0, -100]);
+    expect(holdAxis([0, 0], [100, 100 * tan(2.1)])).toEqual([100, 100 * tan(2.1)]);
+    expect(holdAxis([5, 5], [5, 5])).toEqual([5, 5]);
+  });
+  it('pickAt: the nearest wall within the radius, else the room under the point; a hole is not the room; nothing outside', () => {
+    const s = {
+      walls: [
+        { id: 'w1', a: { x: 0, y: 0 }, b: { x: 1000, y: 0 }, thickness: 100 },
+        { id: 'w2', a: { x: 0, y: 200 }, b: { x: 1000, y: 200 }, thickness: 100 },
+      ],
+      rooms: [{ id: 'r', boundary: [{ x: 0, y: 50 }, { x: 1000, y: 50 }, { x: 1000, y: 1000 }, { x: 0, y: 1000 }], holes: [[{ x: 400, y: 400 }, { x: 600, y: 400 }, { x: 600, y: 600 }, { x: 400, y: 600 }]] }],
+    };
+    expect(pickAt({ x: 500, y: 60 }, s, 20)).toEqual({ kind: 'wall', id: 'w1' });
+    expect(pickAt({ x: 500, y: 140 }, s, 20)).toEqual({ kind: 'wall', id: 'w2' });
+    expect(pickAt({ x: 500, y: 300 }, s, 20)).toEqual({ kind: 'room', id: 'r' });
+    expect(pickAt({ x: 500, y: 500 }, s, 20)).toBeNull();
+    expect(pickAt({ x: 5000, y: 500 }, s, 20)).toBeNull();
   });
 });

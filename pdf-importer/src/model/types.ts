@@ -13,6 +13,8 @@ export type Side = 'A' | 'B';
 export type StateName = 'existing' | 'planned';
 /** Whether the contractor's walls include plaster: no, as a separate line, inside the wall's thickness, not known. */
 export type Plaster = 'none' | 'line' | 'inWall' | 'unknown';
+/** What a wall is built of (owner, round 13). Not geometry: setting it never needs a release. */
+export type WallMaterial = 'gypsum' | 'block' | 'concrete' | 'other';
 
 /** a and b are the wall's physical ends on its centre line; its body is the rectangle of a, b and thickness. */
 export type Wall = {
@@ -27,6 +29,8 @@ export type Wall = {
   finishEnd?: number | null;
   source: 'detected' | 'manual';
   review: boolean;
+  /** Absent: not chosen. */
+  material?: WallMaterial;
   status?: Status;
   /**
    * Planned state: the ends before the first planned change. Set for a moved wall, and for a neighbour that only
@@ -137,9 +141,10 @@ export type Notice = 'load-bearing-warning' | 'plaster-in-wall' | { rooms: RoomC
 export type Result = { ok: true; project: Project; notice?: Notice } | { ok: false; reason: Reason };
 
 export type Action =
-  | { type: 'x.addWall'; a: Pt; b: Pt; thickness: number }
+  | { type: 'x.addWall'; a: Pt; b: Pt; thickness: number; material?: WallMaterial }
   | { type: 'x.deleteWall'; id: Id }
-  | { type: 'x.setWall'; id: Id; a?: Pt; b?: Pt; thickness?: number }
+  /** material alone changes no geometry and is allowed on a locked wall; null clears it. */
+  | { type: 'x.setWall'; id: Id; a?: Pt; b?: Pt; thickness?: number; material?: WallMaterial | null }
   | { type: 'x.splitWall'; id: Id; at: number }
   | { type: 'x.addOpening'; wallId: Id; offset: number; width: number; kind: Opening['kind'] }
   | { type: 'x.setOpening'; id: Id; offset?: number; width?: number; kind?: Opening['kind'] }

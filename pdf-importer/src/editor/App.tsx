@@ -1,4 +1,4 @@
-import { type DragEvent, useMemo, useRef, useState } from 'react';
+import { type DragEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { copy } from '../copy';
 import { MAX_FILE_BYTES } from '../limits';
 import type { Plaster } from '../model/types';
@@ -6,12 +6,16 @@ import type { ExtractedPage } from '../pdf/extract';
 import { openPdf, type PdfSession } from '../pdf/openPdf';
 import type { Picture } from '../pdf/render';
 import type { Calibration } from '../shared';
+import { pdfToBase64 } from '../storage/projectFile';
 import { useCalibrate } from './Calibrate';
 import { Canvas } from './Canvas';
+import { useEditor } from './Editor';
 import './editor.css';
 import { useMeasure } from './MeasureTool';
 import { snapIndex } from './snap';
 import { Upload } from './Upload';
+import { CommitField } from './SidePanel';
+import { newProject, rescaled, type Store, useProject } from './useProject';
 
 /** turn: of the request that showed it, so that a page shown again starts afresh. */
 type Shown = { pageNo: number; page: ExtractedPage; picture: Picture; turn: number };
@@ -29,6 +33,31 @@ export function App() {
   const drawing = useRef<HTMLDivElement>(null);
   const turn = useRef(0); // of the last file or page asked for; the answer to an earlier one is dropped
   const opening = useRef<AbortController | null>(null); // ends the file before, even while it is still opening
+  const bytes = useRef<ArrayBuffer | null>(null); // of the file open now: the project keeps a copy of the PDF
+  const store = useProject();
+  const project = store.project;
+  const latest = useRef(store);
+  latest.current = store;
+
+  // Once there is a project it alone holds the scale and the plaster answer: undo takes them back with everything else.
+  const scale = project?.calibration ?? calibration;
+  const plasterNow = project ? project.plaster : plaster;
+
+  // Ctrl+Z, Ctrl+Y and Ctrl+Shift+Z, but not while typing text: a text field keeps its own undo (owner R20 for the layouts).
+  useEffect(() => {
+    const keys = (event: KeyboardEvent) => {
+      const typing = event.target instanceof HTMLElement && (event.target.isContentEditable || event.target.matches('textarea, input:not([type=checkbox], [type=radio], [type=range], [type=button], [type=submit], [type=file])'));
+      if (typing || !(event.ctrlKey || event.metaKey) || event.altKey || !latest.current.project) return;
+      // the printed letter on a Latin layout (AZERTY, Dvorak); the key's place where it prints no Latin letter (Hebrew)
+      const letter = /^[a-z]$/i.test(event.key) ? event.key.toLowerCase() : ({ KeyZ: 'z', KeyY: 'y' } as Record<string, string>)[event.code];
+      if (letter === 'z' && !event.shiftKey) latest.current.undo();
+      else if (letter === 'y' || (letter === 'z' && event.shiftKey)) latest.current.redo();
+      else return;
+      event.preventDefault();
+    };
+    addEventListener('keydown', keys);
+    return () => removeEventListener('keydown', keys);
+  }, []);
 
   async function open(file: File) {
     const mine = ++turn.current;
@@ -39,11 +68,17 @@ export function App() {
     setShown(null);
     setCalibration(null);
     setPlaster(null);
+    store.clear();
+    bytes.current = null;
     setProblem('');
     setFileName(file.name);
     setBusy(true);
     let opened: Opened = { ok: false, code: 'too-large' };
-    if (file.size <= MAX_FILE_BYTES) opened = await file.arrayBuffer().then(bytes => openPdf(bytes, stop.signal)).catch(() => ({ ok: false, code: 'failed' }));
+    if (file.size <= MAX_FILE_BYTES)
+      opened = await file
+        .arrayBuffer()
+        .then(read => openPdf((bytes.current = read), stop.signal))
+        .catch(() => ({ ok: false, code: 'failed' }));
     if (mine !== turn.current) {
       if (opened.ok) opened.session.close();
       return;
@@ -58,6 +93,7 @@ export function App() {
     const mine = ++turn.current;
     setShown(null);
     setCalibration(null);
+    store.clear();
     setProblem('');
     setBusy(true);
     const { clientWidth, clientHeight } = drawing.current!;
@@ -83,6 +119,25 @@ export function App() {
     return null;
   }
 
+  /** The first accepted scale makes the project; a later one scales what was drawn, or is refused and the old one stays. */
+  async function calibrated(next: Calibration) {
+    if (latest.current.project) {
+      const refused = rescaled(latest.current, next);
+      return refused ? setProblem(copy.reason[refused] ?? copy.editor.reasonOther) : setCalibration(next);
+    }
+    setCalibration(next);
+    const mine = turn.current;
+    const page = shown;
+    if (!bytes.current || !page) return;
+    const pdfBase64 = await pdfToBase64(bytes.current).catch(() => null);
+    if (mine !== turn.current || pdfBase64 === null) return; // another file or page was asked for meanwhile
+    latest.current.load(newProject({ fileName, pdfBase64, page: page.pageNo, calibration: next, plaster, colours: page.page.colours }));
+  }
+  function answerPlaster(answer: Plaster) {
+    setPlaster(answer);
+    if (latest.current.project) latest.current.dispatch({ type: 'setPlaster', plaster: answer });
+  }
+
   function drop(event: DragEvent) {
     event.preventDefault(); // else the browser leaves this page and opens the file
     const { files } = event.dataTransfer;
@@ -100,6 +155,7 @@ export function App() {
         <Upload onFile={file => void open(file)} />
         {nothingYet && <p>{copy.startLimits}</p>}
         <bdi>{fileName}</bdi>
+        {project && <ProjectBar store={store} />}
         {pages.length > 0 && (
           <nav aria-label={copy.pages}>
             {pages.map(n => (
@@ -112,11 +168,11 @@ export function App() {
       </header>
       <p role="status">{busy ? copy.opening : pages.length > 0 && !shown && !problem ? copy.whichPage(pages.length) : ''}</p>
       <p role="alert">{problem}</p>
-      {calibration && !calibration.verified && <p className="unverified" aria-live="polite">{copy.unverified}</p>}
+      {scale && !scale.verified && <p className="unverified" aria-live="polite">{copy.unverified}</p>}
       {/* ltr: the drawing never mirrors with the RTL page */}
       <div dir="ltr" data-testid="drawing" ref={drawing}>
         {shown && (
-          <Work key={shown.turn} shown={shown} draw={draw} calibration={calibration} onCalibration={setCalibration} plaster={plaster} onPlaster={setPlaster} />
+          <Work key={shown.turn} shown={shown} draw={draw} calibration={scale} onCalibration={next => void calibrated(next)} plaster={plasterNow} onPlaster={answerPlaster} store={store} />
         )}
       </div>
     </main>
@@ -130,10 +186,33 @@ type WorkProps = {
   onCalibration: (calibration: Calibration) => void;
   plaster: Plaster | null;
   onPlaster: (answer: Plaster) => void;
+  store: Store;
 };
 
+/** The project's name, its two states and undo, in the header once there is a project. */
+function ProjectBar({ store }: { store: Store }) {
+  const e = copy.editor;
+  const project = store.project!;
+
+  return (
+    <>
+      <label className="project-name">
+        {e.name}{' '}
+        {/* an empty name is not taken */}
+        <CommitField value={project.name} maxLength={200} onCommit={name => !!name.trim() && store.dispatch({ type: 'setName', name }).ok} />
+      </label>
+      <div role="tablist" aria-label={e.states}>
+        <button type="button" role="tab" aria-selected="true">{e.existing}</button>
+        <button type="button" role="tab" aria-selected="false" disabled>{e.planned}</button>
+      </div>
+      <button type="button" disabled={!store.canUndo} onClick={store.undo}>{e.undo}</button>
+      <button type="button" disabled={!store.canRedo} onClick={store.redo}>{e.redo}</button>
+    </>
+  );
+}
+
 /** The page with the tool of the moment: calibration until a scale is accepted, then measuring. */
-function Work({ shown: { page, pageNo, picture }, draw, calibration, onCalibration, plaster, onPlaster }: WorkProps) {
+export function Work({ shown: { page, pageNo, picture }, draw, calibration, onCalibration, plaster, onPlaster, store }: WorkProps) {
   const index = useMemo(() => snapIndex(page), [page]);
   // While recalibrating, the calibration there is stays (and with it the warning) until a new one replaces it; nothing measures meanwhile.
   const [again, setAgain] = useState(false);
@@ -142,10 +221,18 @@ function Work({ shown: { page, pageNo, picture }, draw, calibration, onCalibrati
     onCalibration(next);
   });
   const measure = useMeasure(index, calibration, plaster, () => setAgain(true));
-  const tool = calibration && !again ? measure : calibrate;
+  const [ptPerPx, setPtPerPx] = useState(1);
+  const editor = useEditor({ store, page, plaster, measure, ptPerPx });
+  // the editor once there is a project, and never while recalibrating
+  const edit = calibration && !again ? editor : null;
+  const tool = edit ?? (calibration && !again ? measure : calibrate);
   return (
     <>
-      <Canvas page={page} pageNo={pageNo} picture={picture} draw={draw} onPick={tool.pick} onHover={tool.hover}>
+      {/* the editor's tools come before the drawing, on the screen and for the keyboard; always there, so that the Canvas keeps its place */}
+      <div className="view-row" dir="rtl">
+        {edit?.head}
+      </div>
+      <Canvas page={page} pageNo={pageNo} picture={picture} draw={draw} onPick={tool.pick} onHover={tool.hover} strength={edit?.strength} onScale={setPtPerPx}>
         {tool.marks}
       </Canvas>
       <aside dir="rtl" className="panel">

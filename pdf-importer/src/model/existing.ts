@@ -18,7 +18,7 @@ import {
   wallFits,
 } from './rules';
 import { CAPS, LIMITS } from './schema';
-import type { Id, Notice, Opening, Project, Pt, Room, RoomChange, State, Wall } from './types';
+import type { Id, Notice, Opening, Project, Pt, Room, RoomChange, State, Wall, WallMaterial } from './types';
 
 const TOL = LIMITS.tolerance;
 const num = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : refuse('invalid-number'));
@@ -35,6 +35,8 @@ function text(t: unknown, least: number): string {
 }
 const find = <T extends { id: Id }>(list: T[], id: unknown): T => list.find(x => x.id === id) ?? refuse('invalid-action');
 const length = (w: { a: Pt; b: Pt }) => dist(w.a, w.b);
+const MATERIALS: readonly unknown[] = ['gypsum', 'block', 'concrete', 'other'] satisfies WallMaterial[];
+const material = (m: unknown): WallMaterial => (MATERIALS.includes(m) ? (m as WallMaterial) : refuse('invalid-action'));
 const notice = (project: Project, n?: Notice): Change => (n === undefined ? { project } : { project, notice: n });
 const withState = (p: Project, existing: State): Project => ({ ...p, existing });
 const mamadLocked = (fact: boolean) => fact && refuse('mamad-locked');
@@ -108,6 +110,7 @@ export const existingHandlers: Handlers = {
     locked(p);
     const s = p.existing;
     const w: Wall = { id: crypto.randomUUID(), a: pt(a.a), b: pt(a.b), thickness: num(a.thickness), finishA: null, finishB: null, source: 'manual', review: false };
+    if (a.material !== undefined) w.material = material(a.material);
     mamadLocked(wallEntersMamad(s, w) || !mamadAllows.lay(s, w));
     envelopeLocked(p, () => !envelopeAllows.lay(s, w));
     return rebuildExisting(p, { ...s, walls: [...s.walls, w] }, [w.id]);
@@ -127,8 +130,15 @@ export const existingHandlers: Handlers = {
     locked(p);
     const s = p.existing;
     const old = find(s.walls, a.id);
+    const { material: _, ...bare } = old;
+    const built: Wall = a.material === undefined ? old : a.material === null ? bare : { ...bare, material: material(a.material) };
+    if (a.a === undefined && a.b === undefined && a.thickness === undefined) {
+      if (a.material === undefined) return { project: p }; // nothing asked: nothing changes, not even the project object
+      // what it is built of, not where: no lock, no recompute, nothing un-confirmed
+      return { project: withState(p, { ...s, walls: s.walls.map(x => (x === old ? built : x)) }) };
+    }
     const w: Wall = {
-      ...old,
+      ...built,
       a: a.a === undefined ? old.a : pt(a.a),
       b: a.b === undefined ? old.b : pt(a.b),
       thickness: a.thickness === undefined ? old.thickness : num(a.thickness),

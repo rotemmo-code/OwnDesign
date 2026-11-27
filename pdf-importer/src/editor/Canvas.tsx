@@ -28,10 +28,14 @@ type Props = {
   onHover?(at: Vec | null, radiusPt: number): void;
   /** In view points; a function gets view points per CSS pixel, for marks of one size on the screen. */
   children?: ReactNode | ((ptPerPx: number) => ReactNode);
+  /** The contractor's page from 20 to 100 % strength under the draft; never saved. */
+  strength?: number;
+  /** View points per CSS pixel, whenever the view or the frame changes. */
+  onScale?(ptPerPx: number): void;
 };
 
 /** The page, and over it whatever is drawn in view points. */
-export function Canvas({ page, pageNo, picture, draw, onPick, onHover, children }: Props) {
+export function Canvas({ page, pageNo, picture, draw, onPick, onHover, children, strength = 100, onScale }: Props) {
   const frame = useRef<HTMLDivElement>(null);
   const svg = useRef<SVGSVGElement>(null);
   const [view, setView] = useState<Box>(() => whole(page));
@@ -56,6 +60,8 @@ export function Canvas({ page, pageNo, picture, draw, onPick, onHover, children 
   const radius = () => SNAP_PX / svg.current!.getScreenCTM()!.a; // CSS pixels per view point
   const zoom = (factor: number) => setView(old => zoomed(old, page, [old[0] + old[2] / 2, old[1] + old[3] / 2], factor));
   const move = (dx: number, dy: number) => setView(old => moved(old, [dx, dy]));
+  /** The one whole-page view, fitted and centred: the "איפוס תצוגה" button and the key 0 (owner R15). */
+  const fit = () => setView(whole(page));
 
   useLayoutEffect(() => {
     const measure = () => {
@@ -137,9 +143,10 @@ export function Canvas({ page, pageNo, picture, draw, onPick, onHover, children 
   }, [view, size]);
 
   const ptPerPx = devicePixelRatio / layout(view, size).scale;
+  useEffect(() => onScale?.(ptPerPx), [ptPerPx, onScale]);
   return (
     <>
-      <div className="frame" ref={frame}>
+      <div className="frame" ref={frame} style={strength === 100 ? undefined : { ['--plan' as string]: strength / 100 }}>
         <PagePicture picture={picture} view={view} size={size} />
         {sharp && <PagePicture picture={sharp} view={view} size={size} />}
         <svg
@@ -193,7 +200,7 @@ export function Canvas({ page, pageNo, picture, draw, onPick, onHover, children 
               '+': () => zoom(NOTCH),
               '=': () => zoom(NOTCH),
               '-': () => zoom(1 / NOTCH),
-              '0': () => setView(whole(page)),
+              '0': fit,
               ArrowLeft: () => move(-view[2] / step, 0),
               ArrowRight: () => move(view[2] / step, 0),
               ArrowUp: () => move(0, -view[3] / step),
@@ -216,7 +223,12 @@ export function Canvas({ page, pageNo, picture, draw, onPick, onHover, children 
         <div role="group" aria-label={copy.zoom} dir="rtl">
           <button type="button" onClick={() => zoom(NOTCH)}>{copy.zoomIn}</button>
           <button type="button" onClick={() => zoom(1 / NOTCH)}>{copy.zoomOut}</button>
-          <button type="button" onClick={() => setView(whole(page))}>{copy.fit}</button>
+          <button type="button" onClick={fit}>{copy.fit}</button>
+          {/* 100 % = the whole page in the frame */}
+          <span className="zoom" data-testid="zoom">
+            <span className="hidden-label">{copy.editor.zoom} </span>
+            {copy.editor.percent(Math.round((page.widthPt / view[2]) * 100))}
+          </span>
         </div>
         <p id="canvas-help" dir="rtl">{copy.help}</p>
       </div>
