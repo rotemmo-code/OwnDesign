@@ -396,7 +396,7 @@ test('undo and redo walk through five actions, by the buttons and by Ctrl+Z and 
   expect(await count()).toBe(3);
 });
 
-test('Ctrl+Z and Ctrl+Y work on a Hebrew keyboard layout, where the key is ז and ט', async ({ page }) => {
+test('Ctrl+Z and Ctrl+Y follow the printed letter on a Latin layout and the place of the key on a Hebrew one', async ({ page }) => {
   await start(page);
   await drawFive(page, 2);
   const count = () => page.locator('[data-wall]').count();
@@ -406,6 +406,13 @@ test('Ctrl+Z and Ctrl+Y work on a Hebrew keyboard layout, where the key is ז an
   await press('ז', 'KeyZ');
   expect(await count()).toBe(1);
   await press('ט', 'KeyY');
+  expect(await count()).toBe(2);
+  // a Latin layout goes by the printed letter (owner R20): Z where QWERTY has W, as on AZERTY; and W in Z's place does nothing
+  await press('z', 'KeyW');
+  expect(await count()).toBe(1);
+  await press('w', 'KeyZ');
+  expect(await count()).toBe(1);
+  await press('y', 'KeyZ');
   expect(await count()).toBe(2);
 });
 

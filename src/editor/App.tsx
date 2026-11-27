@@ -43,14 +43,15 @@ export function App() {
   const scale = project?.calibration ?? calibration;
   const plasterNow = project ? project.plaster : plaster;
 
-  // Ctrl+Z, Ctrl+Y and Ctrl+Shift+Z, but not while typing text: a text field keeps its own undo. By the key's place, not its
-  // letter: on a Hebrew layout Ctrl+Z gives the key 'ז'.
+  // Ctrl+Z, Ctrl+Y and Ctrl+Shift+Z, but not while typing text: a text field keeps its own undo (owner R20 for the layouts).
   useEffect(() => {
     const keys = (event: KeyboardEvent) => {
       const typing = event.target instanceof HTMLElement && (event.target.isContentEditable || event.target.matches('textarea, input:not([type=checkbox], [type=radio], [type=range], [type=button], [type=submit], [type=file])'));
       if (typing || !(event.ctrlKey || event.metaKey) || event.altKey || !latest.current.project) return;
-      if (event.code === 'KeyZ' && !event.shiftKey) latest.current.undo();
-      else if (event.code === 'KeyY' || (event.code === 'KeyZ' && event.shiftKey)) latest.current.redo();
+      // the printed letter on a Latin layout (AZERTY, Dvorak); the key's place where it prints no Latin letter (Hebrew)
+      const letter = /^[a-z]$/i.test(event.key) ? event.key.toLowerCase() : ({ KeyZ: 'z', KeyY: 'y' } as Record<string, string>)[event.code];
+      if (letter === 'z' && !event.shiftKey) latest.current.undo();
+      else if (letter === 'y' || (letter === 'z' && event.shiftKey)) latest.current.redo();
       else return;
       event.preventDefault();
     };
