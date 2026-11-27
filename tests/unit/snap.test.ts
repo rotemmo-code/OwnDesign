@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Clip, ExtractedPage, PathItem } from '../../src/pdf/extract';
 import type { Vec } from '../../src/shared';
-import { holdAxis, pickAt, snapCentre, snapIndex, snapPoint } from '../../src/editor/snap';
+import { holdAxis, pickAt, secondEnd, snapCentre, snapIndex, snapPoint } from '../../src/editor/snap';
 
 // Synthetic pages in view points: 842 x 595 unless a test says otherwise.
 const stroke = (pts: Vec[], more: Partial<PathItem> = {}): PathItem => ({
@@ -166,6 +166,19 @@ describe('the wall tool: snapCentre, holdAxis and pickAt', () => {
   });
   it('the centre-line end of a wall already drawn comes first', () => {
     expect(centre(pageOf([wall]), [101, 104], [[102, 105]])).toEqual({ at: [102, 105], to: 'wall' });
+  });
+  it('midway between two near-vertical faces that lean apart by a hair, as drawings have them', () => {
+    const noisy = pageOf([filled([[100, 100], [110, 100], [110.01, 300], [99.99, 300]])]);
+    expect(centre(noisy, [103, 200])).toEqual({ at: [expect.closeTo(105, 6), expect.closeTo(200, 3)], to: 'between' });
+    const exact = pageOf([rect(100, 100, 110, 300)]);
+    expect(centre(exact, [103, 200])).toEqual({ at: [105, 200], to: 'between' });
+  });
+  it('secondEnd: a snapped point is kept as it is; only a free point is held to an axis', () => {
+    const tan = Math.tan(Math.PI / 180);
+    expect(secondEnd([0, 0], { at: [170, 170 * tan], to: 'wall' })).toEqual([170, 170 * tan]);
+    expect(secondEnd([0, 0], { at: [170, 170 * tan], to: 'end' })).toEqual([170, 170 * tan]);
+    expect(secondEnd([0, 0], { at: [170, 170 * tan], to: 'between' })).toEqual([170, 170 * tan]);
+    expect(secondEnd([0, 0], { at: [170, 170 * tan], to: null })).toEqual([170, 0]);
   });
   it('holdAxis: within 2 degrees of the horizontal or vertical through the first end, held to it; beyond, kept', () => {
     const tan = (deg: number) => Math.tan((deg * Math.PI) / 180);

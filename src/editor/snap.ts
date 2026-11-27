@@ -280,9 +280,12 @@ function between(index: SnapIndex, p: Vec, r: number, mmPerPt: number): Vec | nu
   let best: { gap: number; off: number; u: Vec } | null = null;
   for (const f of lines)
     for (const g of lines) {
-      if (f.d <= 0 || g.d >= 0 || Math.abs(cross(f.u, g.u)) > PARALLEL) continue;
-      const gap = f.d - g.d;
-      const off = (f.d + g.d) / 2;
+      if (Math.abs(cross(f.u, g.u)) > PARALLEL) continue;
+      // g's side measured along f's direction: two faces leaning a hair apart may run opposite ways
+      const gd = f.u[0] * g.u[0] + f.u[1] * g.u[1] < 0 ? -g.d : g.d;
+      if (f.d <= 0 || gd >= 0) continue;
+      const gap = f.d - gd;
+      const off = (f.d + gd) / 2;
       if (gap * mmPerPt < MIN_WALL || gap * mmPerPt > MAX_WALL || Math.abs(off) > r) continue;
       if (!best || gap < best.gap - 1e-9 || (Math.abs(gap - best.gap) <= 1e-9 && Math.abs(off) < Math.abs(best.off))) best = { gap, off, u: f.u };
     }
@@ -346,3 +349,6 @@ export function pickAt(p: Mm, s: { walls: { id: string; a: Mm; b: Mm; thickness:
   const room = s.rooms.find(r => inRing(r.boundary, p) && !r.holes.some(h => inRing(h, p)));
   return room ? { kind: 'room', id: room.id } : null;
 }
+
+/** Where the second click puts the wall's end: a snapped point as it is, a free point held to an axis near it. */
+export const secondEnd = (from: Vec, snap: CentreSnap): Vec => (snap.to ? snap.at : holdAxis(from, snap.at));
