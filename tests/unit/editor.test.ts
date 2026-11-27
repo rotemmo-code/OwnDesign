@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest';
 import { copy } from '../../src/copy';
-import { createStore, newProject, roomEvents } from '../../src/editor/useProject';
+import { createStore, newProject, rescaled, roomEvents } from '../../src/editor/useProject';
 import { apply } from '../../src/model/apply';
 import { ProjectSchema } from '../../src/model/schema';
 import type { Action, Project } from '../../src/model/types';
@@ -135,4 +135,14 @@ it('roomEvents: split parts, merge sources, and a room that is gone', () => {
   const gone = apply(p, { type: 'x.deleteWall', id: 'left' });
   if (!gone.ok) throw new Error(gone.reason);
   expect(roomEvents(p.existing, gone.project.existing, gone.notice).gone.map(r => r.id)).toEqual(['room-a']);
+});
+
+it('rescaled: a later scale scales what was drawn; a refusal is passed on and nothing changes', () => {
+  const store = createStore();
+  store.load(open());
+  expect(rescaled(store, { ...calibration, mmPerPt: calibration.mmPerPt * 1.05 })).toBeNull();
+  expect(store.project!.existing.walls.find(w => w.id === 'part')!.a.x).toBeCloseTo(3250 * 1.05, 6);
+  const refusing = { dispatch: () => ({ ok: false as const, reason: 'invalid-geometry' as const }) };
+  expect(rescaled(refusing, calibration)).toBe('invalid-geometry');
+  expect(rescaled(store, { ...calibration, mmPerPt: -1 })).toBe('invalid-number');
 });

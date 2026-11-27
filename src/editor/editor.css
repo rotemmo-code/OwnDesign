@@ -58,7 +58,7 @@ button[aria-pressed='true'], .upload { color: var(--c-paper); background: var(--
 .aim { stroke: var(--c-ink); }
 
 /*
- * The editor (Task 11a). The row of tools and the view's reset sit above the drawing in every screen with a page; the plan keeps
+ * The editor (Task 11a). Its row of tools sits above the drawing, the one view control below it (owner R15); the plan keeps
  * at least 280 px and the page scrolls when the window is shorter (owner R7). Under 700 px wide: one column, the panel under the plan.
  */
 [data-testid='drawing']:not(:empty) { grid-template-rows: auto minmax(280px, 1fr) auto; }
@@ -66,8 +66,6 @@ button[aria-pressed='true'], .upload { color: var(--c-paper); background: var(--
 .frame, .panel { grid-row: 2; }
 .tools { grid-row: 3; }
 .toolbar, [role='tablist'] { display: flex; flex-wrap: wrap; gap: 4px; }
-.reset { display: inline-flex; gap: 8px; align-items: center; white-space: nowrap; }
-.reset span { font-weight: 700; min-inline-size: 3.5em; }
 .strength input { vertical-align: middle; }
 [role='tab'][aria-selected='true'] { color: var(--c-paper); background: var(--c-dimension); }
 button:disabled { cursor: default; color: var(--c-ink); border-color: var(--c-ink); opacity: 0.5; }
@@ -98,3 +96,9 @@ header .project-name input { inline-size: 14em; }
   .legend { position: static; }
 }
 .frame canvas { opacity: var(--plan, 1); } /* the plan's strength; never set at 100 % */
+
+/* Owner R15: one view control after the drawing; the tools row before it, empty and hidden on the calibration screen. */
+.view-row:empty { display: none; }
+.zoom { font-weight: 700; min-inline-size: 3.5em; white-space: nowrap; }
+.hidden-label { position: absolute; inline-size: 1px; block-size: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+[data-testid='zoom-hint']:empty { display: none; }

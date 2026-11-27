@@ -170,12 +170,12 @@ test('a click 3 px off the centre lands on it where a snap exists; where none do
   await page.keyboard.press('Control+z');
   await thickness(page).fill('10');
   await clickMm(page, [8000, 2000]);
-  const first = await onScreen(page, viewOf(50, [8000, 2000]));
   await clickMm(page, [10000, 2000 + 2000 * Math.tan(Math.PI / 180)]);
   const [box] = await wallBoxes(page);
   expect(box[3] - box[1]).toBeCloseTo(100, 6); // horizontal: as thick as typed, no taller
   expect(Math.abs((box[1] + box[3]) / 2 - 2000)).toBeLessThan(5); // where the first click was, within a screen pixel
-  expect(first[0]).toBeGreaterThan(0);
+  expect(Math.abs(box[0] - 8000)).toBeLessThan(5); // its first end where that click was
+  expect(Math.abs(box[2] - 10000)).toBeLessThan(5);
 });
 
 test('between the two clicks the wall body follows the pointer with its length × thickness; Escape cancels', async ({ page }) => {
@@ -324,7 +324,7 @@ test('a class is told by paint and by words: fixed dark, changeable solid, unkno
 test('every tool button and field has a text label', async ({ page }) => {
   await start(page);
   for (const name of [e.select, e.wall, e.remove, copy.measure.title]) await expect(page.getByRole('group', { name: e.tools }).getByRole('button', { name, exact: true })).toBeVisible();
-  for (const name of [e.undo, e.redo, e.reset, copy.zoomIn, copy.zoomOut, copy.fit]) await expect(page.getByRole('button', { name })).toBeVisible();
+  for (const name of [e.undo, e.redo, copy.zoomIn, copy.zoomOut, copy.fit]) await expect(page.getByRole('button', { name })).toBeVisible();
   await expect(page.getByLabel(e.strength)).toBeVisible();
   await expect(page.getByLabel(e.name)).toBeVisible();
   await tool(page, e.wall);
@@ -367,26 +367,46 @@ test('the legend is visible and lists exactly the paints on screen, each with it
   await expect(legend).toBeInViewport();
 });
 
-test('undo and redo walk through five actions, by the buttons and by Ctrl+Z and Ctrl+Y, but not while typing', async ({ page }) => {
+test('undo and redo walk through five actions, by the buttons and by Ctrl+Z and Ctrl+Y, but not while typing text', async ({ page }) => {
   await start(page);
-  await drawFive(page, 4);
+  await drawFive(page); // five actions
   const count = () => page.locator('[data-wall]').count();
   await page.getByRole('button', { name: e.undo }).click();
-  expect(await count()).toBe(3);
-  await page.keyboard.press('Control+z');
-  await page.keyboard.press('Control+z');
-  expect(await count()).toBe(1);
+  expect(await count()).toBe(4);
+  for (let i = 0; i < 4; i++) await page.keyboard.press('Control+z');
+  expect(await count()).toBe(0);
+  await expect(page.getByRole('button', { name: e.undo })).toBeDisabled();
   await page.getByRole('button', { name: e.redo }).click();
   await page.keyboard.press('Control+y');
-  await page.keyboard.press('Control+Shift+z');
-  expect(await count()).toBe(4);
-  await page.keyboard.press('Control+z');
+  await page.keyboard.press('Control+y');
   expect(await count()).toBe(3);
-  await page.getByRole('button', { name: e.redo }).click();
+  await page.keyboard.press('Control+Shift+z');
+  await page.keyboard.press('Control+Shift+z');
+  expect(await count()).toBe(5);
   await expect(page.getByRole('button', { name: e.redo })).toBeDisabled();
+  await page.keyboard.press('Control+z');
+  expect(await count()).toBe(4);
+  // in a text field Ctrl+Z is the field's own
   await page.getByLabel(e.name).focus();
   await page.keyboard.press('Control+z');
   expect(await count()).toBe(4);
+  // after a click on a checkbox, a select or the slider it is the drawing's
+  await page.getByLabel(e.strength).focus();
+  await page.keyboard.press('Control+z');
+  expect(await count()).toBe(3);
+});
+
+test('Ctrl+Z and Ctrl+Y work on a Hebrew keyboard layout, where the key is ז and ט', async ({ page }) => {
+  await start(page);
+  await drawFive(page, 2);
+  const count = () => page.locator('[data-wall]').count();
+  const press = (key: string, code: string) =>
+    page.evaluate(([key, code]) => document.body.dispatchEvent(new KeyboardEvent('keydown', { key, code, ctrlKey: true, bubbles: true, cancelable: true })), [key, code]);
+  await page.locator('body').click({ position: { x: 1, y: 1 } });
+  await press('ז', 'KeyZ');
+  expect(await count()).toBe(1);
+  await press('ט', 'KeyY');
+  expect(await count()).toBe(2);
 });
 
 test('the drawing is not mirrored in the right-to-left page', async ({ page }) => {
@@ -584,7 +604,7 @@ const readView = (page: Page) =>
 async function zoomAndPan(page: Page) {
   await page.mouse.move(...(await onScreen(page, viewOf(50, [3200, 2200]))));
   for (let i = 0; i < 7; i++) await page.mouse.wheel(0, -100);
-  await expect(page.getByTestId('zoom')).not.toHaveText('100%');
+  await expect(page.getByTestId('zoom')).not.toHaveText(/ 100%$/);
   const box = (await canvas(page).boundingBox())!;
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
   await page.mouse.down();
@@ -592,13 +612,13 @@ async function zoomAndPan(page: Page) {
   await page.mouse.up();
 }
 async function reset(page: Page) {
-  await page.getByRole('button', { name: e.reset }).click();
+  await page.getByRole('button', { name: copy.fit }).click();
   await expect(canvas(page)).toHaveAttribute('viewBox', '0 0 842 595');
-  await expect(page.getByTestId('zoom')).toHaveText('100%');
+  await expect(page.getByTestId('zoom')).toHaveText(`${e.zoom} 100%`); // the words for a screen reader, the number on the screen
 }
 const clickAt = async (page: Page, mm: Vec) => page.mouse.click(...(await onScreen(page, viewOf(50, mm))));
 
-test('איפוס תצוגה gives back the whole page, centred, at 100 %, the same as כל העמוד and the key 0', async ({ page }) => {
+test('איפוס תצוגה and the key 0 give back the whole page, centred, at 100 %, on the editor and on the calibration screen', async ({ page }) => {
   await start(page);
   await zoomAndPan(page);
   await reset(page);
@@ -607,9 +627,6 @@ test('איפוס תצוגה gives back the whole page, centred, at 100 %, the sa
   expect(v.a).toBeCloseTo(a, 6);
   expect(v.e).toBeCloseTo(v.fl + (v.fw - 842 * a) / 2, 2);
   expect(v.f).toBeCloseTo(v.ft + (v.fh - 595 * a) / 2, 2);
-  await zoomAndPan(page);
-  await page.getByRole('button', { name: copy.fit }).click();
-  expect(await readView(page)).toEqual(v);
   await zoomAndPan(page);
   await canvas(page).focus();
   await page.keyboard.press('0');
@@ -671,7 +688,7 @@ test('narrow and short windows and a 300 % browser zoom: no sideways scroll, the
     expect(m.sideways, label).toBeLessThanOrEqual(0);
     expect(m.overlap, label).toBe(0);
     expect(m.height, label).toBeGreaterThanOrEqual(279.5);
-    for (const name of [e.reset, e.wall, e.undo, copy.fit]) {
+    for (const name of [e.wall, e.undo, copy.fit]) {
       const button = page.getByRole('button', { name, exact: true });
       await button.scrollIntoViewIfNeeded();
       const reachable = await button.evaluate(b => {
@@ -688,4 +705,188 @@ test('narrow and short windows and a 300 % browser zoom: no sideways scroll, the
     expect(await page.evaluate(() => window.violations), label).toEqual([]);
     await context.close();
   }
+});
+
+// ---- fix round 1 ----
+test('one view control, after the drawing; the editor\'s tools before it: the keyboard\'s order is the order on the screen', async ({ page }) => {
+  await start(page);
+  await expect(page.getByRole('button', { name: copy.fit })).toHaveCount(1);
+  const order = await page.evaluate(([tools, fit]) => {
+    const group = document.querySelector(`[role="group"][aria-label="${tools}"]`)!;
+    const svg = document.querySelector('[data-testid="canvas"]')!;
+    const reset = [...document.querySelectorAll('button')].find(b => b.textContent === fit)!;
+    const before = (a: Element, b: Element) => !!(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
+    const top = (x: Element) => x.getBoundingClientRect().top;
+    return { domToolsFirst: before(group, svg), domResetAfter: before(svg, reset), screenToolsAbove: top(group) < top(svg), screenResetBelow: top(reset) > top(svg) };
+  }, [e.tools, copy.fit]);
+  expect(order).toEqual({ domToolsFirst: true, domResetAfter: true, screenToolsAbove: true, screenResetBelow: true });
+  await expect(page.locator('#canvas-help')).toContainText('0 לאיפוס התצוגה');
+});
+
+test('undo of a recalibration and of a plaster answer takes both back everywhere: walls, measuring, the plaster lines', async ({ page }) => {
+  await start(page, 'none');
+  await tool(page, e.wall);
+  await drawWall(page, FIVE[0]);
+  await tool(page, copy.measure.title);
+  await page.getByRole('button', { name: copy.measure.again }).click();
+  await page.getByRole('button', { name: c.plaster.inWall, exact: true }).click();
+  for (let i = 3; i >= 1; i--) await page.getByRole('button', { name: c.removeLabel(i) }).click();
+  // written 5 % longer than drawn: a scale of about 1:47.6, and every wall 5 % longer in mm
+  for (const [mark, text] of [[DIMS.outer, '672'], [DIMS.heightA, '420'], [DIMS.roomB, '304.5']] as const) await markMm(page, { ...mark, text });
+  await page.getByRole('button', { name: /והמשך|^המשך/ }).click();
+  const width = async () => { const [b] = await wallBoxes(page); return Math.round(b[2] - b[0]); };
+  expect(await width()).toBe(6720);
+  await tool(page, e.wall);
+  await expect(page.getByTestId('plaster-note')).toHaveText(e.plasterNote.inWall);
+  await page.keyboard.press('Control+z'); // the new scale
+  expect(await width()).toBe(6400);
+  await tool(page, copy.measure.title);
+  await expect(page.getByRole('region', { name: copy.measure.title })).toContainText(copy.measure.verified(50, 3));
+  await page.keyboard.press('Control+z'); // the plaster answer
+  await tool(page, e.wall);
+  await expect(page.getByTestId('plaster-note')).toHaveText(e.plasterNote.none);
+});
+
+/** Both rooms, the right one marked as the mamad. */
+async function withMamad(page: Page) {
+  await twoRooms(page);
+  await page.getByRole('button', { name: e.part(1, '12.00') }).click();
+  const right = await room(page, [4700, 2200]);
+  await right.getByLabel(e.isMamad).check();
+}
+const mamadRow = (page: Page) => page.getByText(e.mamadOpen(e.unnamed));
+
+test('the mamad\'s release row follows undo and redo, both ways', async ({ page }) => {
+  await start(page);
+  await withMamad(page);
+  const details = await wall(page, [3250, 3000]);
+  await details.getByRole('button', { name: e.fix }).click();
+  await expect(mamadRow(page)).toBeVisible();
+  await page.keyboard.press('Control+z'); // the mark is back: nothing to confirm
+  await expect(mamadRow(page)).toHaveCount(0);
+  await page.keyboard.press('Control+y');
+  await expect(mamadRow(page)).toBeVisible();
+  await mamadRow(page).getByRole('button', { name: e.confirm }).click();
+  await expect(mamadRow(page)).toHaveCount(0);
+  await page.keyboard.press('Control+z'); // the mark is gone again: the row asks again
+  await expect(mamadRow(page)).toBeVisible();
+});
+
+test('unticking זה הממ"ד is the mamad\'s תיקון: its row with אישור appears', async ({ page }) => {
+  await start(page);
+  await withMamad(page);
+  const right = await room(page, [4700, 2200]);
+  await right.getByLabel(e.isMamad).uncheck();
+  await expect(mamadRow(page)).toBeVisible();
+  await mamadRow(page).getByRole('button', { name: e.confirm }).click();
+  await expect(right.getByLabel(e.isMamad)).toBeChecked();
+});
+
+test('when the room that was the mamad is gone at אישור, the panel says to mark it again', async ({ page }) => {
+  await start(page);
+  await withMamad(page);
+  const details = await wall(page, [3250, 3000]);
+  await details.getByRole('button', { name: e.fix }).click();
+  await tool(page, e.remove);
+  await clickMm(page, [3250, 3000]); // the partition: the two rooms are one
+  await page.getByRole('button', { name: e.save }).click();
+  await mamadRow(page).getByRole('button', { name: e.confirm }).click();
+  await expect(message(page)).toHaveText(e.mamadChanged);
+});
+
+test('the measure tool\'s result carries לפי השרטוט too', async ({ page }) => {
+  await start(page);
+  await clickMm(page, [200, 2500]);
+  await clickMm(page, [3200, 2500]);
+  await expect(page.getByTestId('measured')).toHaveText(`${copy.measure.result('300')} ${copy.byDrawing}`);
+});
+
+test('nothing is drawn over a room\'s name and area: no shape painted after a label meets its box', async ({ page }) => {
+  await start(page);
+  await twoRooms(page);
+  await room(page, [1700, 2200]); // a selected room: its outline and edge lengths
+  await tool(page, e.wall);
+  await thickness(page).fill('50');
+  await clickMm(page, [200, 2100]);
+  await page.getByRole('button', { name: copy.fit }).click();
+  await page.mouse.move(...(await onScreen(page, viewOf(50, [6200, 2100]))));
+  await expect(page.getByTestId('wall-preview')).toBeVisible();
+  const over = await page.evaluate(() => {
+    const svg = document.querySelector('[data-testid="canvas"]')!;
+    const labels = [...svg.querySelectorAll('[data-room] text')];
+    const shapes = [...svg.querySelectorAll('path, rect, circle, line, text, polygon')].filter(x => !x.closest('[data-room]'));
+    const meet = (a: DOMRect, b: DOMRect) => a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
+    // a shape painted after a label, and over it
+    return labels.flatMap(label =>
+      shapes.filter(x => label.compareDocumentPosition(x) & Node.DOCUMENT_POSITION_FOLLOWING && meet(label.getBoundingClientRect(), x.getBoundingClientRect())).map(x => x.outerHTML.slice(0, 40)),
+    );
+  });
+  expect(over).toEqual([]);
+  // and the preview does cross a label's box, so the test means something
+  const crosses = await page.evaluate(() => {
+    const p = document.querySelector('[data-testid="wall-preview"] path')!.getBoundingClientRect();
+    return [...document.querySelectorAll('[data-room] text')].some(t => { const r = t.getBoundingClientRect(); return r.left < p.right && p.left < r.right && r.top < p.bottom && p.top < r.bottom; });
+  });
+  expect(crosses).toBe(true);
+});
+
+test('the plan strength starts again at 100 on another page', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto('/');
+  await page.getByTestId('upload').setInputFiles({ name: 'plan.pdf', mimeType: 'application/pdf', buffer: Buffer.from(dimsPdf(50, 2)) });
+  const calibrate = async (n: number) => {
+    await page.getByRole('button', { name: copy.page(n), exact: true }).click();
+    await expect(page.getByTestId('drawing').locator('canvas')).toHaveCount(2);
+    for (const mark of [DIMS.outer, DIMS.heightA, DIMS.roomB]) await markMm(page, mark);
+    await page.getByRole('button', { name: c.go(50) }).click();
+  };
+  await calibrate(1);
+  await page.getByLabel(e.strength).fill('30');
+  await expect.poll(() => page.locator('.frame canvas').first().evaluate(x => getComputedStyle(x).opacity)).toBe('0.3');
+  await calibrate(2);
+  await expect(page.getByLabel(e.strength)).toHaveValue('100');
+  expect(await page.locator('.frame canvas').first().evaluate(x => getComputedStyle(x).opacity)).toBe('1');
+});
+
+test('zoomed out, the wall tool asks to zoom in first; zoomed in, it does not; it never blocks drawing', async ({ page }) => {
+  await start(page);
+  await tool(page, e.wall);
+  await page.getByRole('button', { name: copy.fit }).click();
+  await expect(page.getByTestId('zoom-hint')).toHaveText(e.zoomHint); // about 13 mm of the apartment per screen pixel here
+  await page.mouse.move(...(await onScreen(page, viewOf(50, [3200, 2200]))));
+  for (let i = 0; i < 4; i++) await page.mouse.wheel(0, -100); // about 2.4 times: about 5.5 mm per pixel, still too far
+  await expect(page.getByTestId('zoom-hint')).toHaveText(e.zoomHint);
+  await page.mouse.wheel(0, -100);
+  await page.mouse.wheel(0, -100);
+  await expect(page.getByTestId('zoom-hint')).toHaveText('');
+  await page.getByRole('button', { name: copy.fit }).click();
+  await thickness(page).fill('20');
+  await clickAt(page, [0, 100]);
+  await clickAt(page, [6400, 100]);
+  expect(await wallBoxes(page)).toEqual([[0, 0, 6400, 200]]);
+});
+
+test('Enter keeps the focus in a name field; a refused thickness goes back to the wall\'s; the question and the message leave with an undo', async ({ page }) => {
+  await start(page);
+  await page.getByLabel(e.name).fill('בית');
+  await page.getByLabel(e.name).press('Enter');
+  expect(await page.evaluate(() => document.activeElement?.getAttribute('maxlength'))).toBe('200');
+  await twoRooms(page);
+  await page.keyboard.press('Control+z'); // the partition: its question goes with it
+  await expect(split(page)).toHaveCount(0);
+  await tool(page, e.wall);
+  await drawWall(page, FIVE[4]);
+  await page.getByRole('button', { name: e.part(1, '12.00') }).click();
+  const details = await wall(page, [3250, 3000]);
+  const field = details.getByLabel(e.thickness);
+  await field.fill('abc');
+  await field.press('Enter');
+  await expect(message(page)).toHaveText(e.badThickness);
+  await expect(field).toHaveValue('10');
+  await expect(field).toBeFocused();
+  await tool(page, e.remove);
+  await clickMm(page, [100, 3000]);
+  await expect(message(page)).not.toHaveText('');
+  await page.keyboard.press('Control+z');
+  await expect(message(page)).toHaveText('');
 });

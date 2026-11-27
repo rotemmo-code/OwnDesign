@@ -26,6 +26,6 @@ it('every Reason the existing state can give has its own text; a lock is said wi
 });
 
 it('the wall tool button and the undo pair read as the owner asked', () => {
-  expect([copy.editor.wall, copy.editor.undo, copy.editor.redo, copy.editor.reset]).toEqual(['הוסף קיר', 'ביטול פעולה', 'ביצוע שוב', 'איפוס תצוגה']);
+  expect([copy.editor.wall, copy.editor.undo, copy.editor.redo, copy.fit]).toEqual(['הוסף קיר', 'ביטול פעולה', 'ביצוע שוב', 'איפוס תצוגה']);
   expect(Object.values(copy.editor.materials)).toEqual(['גבס', 'בלוק', 'בטון', 'אחר']);
 });

@@ -36,7 +36,7 @@ export function createStore(): ProjectStore {
     dispatch(a: Action): Result {
       if (!snapshot.project) return { ok: false, reason: 'invalid-action' };
       const r = apply(snapshot.project, a);
-      if (r.ok) {
+      if (r.ok && r.project !== snapshot.project) {
         history.push(r.project);
         set(r.project);
       }
@@ -142,4 +142,10 @@ export function roomEvents(before: State, after: State, notice?: Notice): RoomEv
   const ids = new Set(after.rooms.map(r => r.id));
   const merged = new Set(merge.flatMap(m => m.from));
   return { split, merge, gone: before.rooms.filter(r => !ids.has(r.id) && !merged.has(r.id)) };
+}
+
+/** A later accepted scale: what was drawn is scaled with it. null, or why the model refused it (the old scale then stays). */
+export function rescaled(store: Pick<Store, 'dispatch'>, next: Calibration): Reason | null {
+  const r = store.dispatch({ type: 'rescale', calibration: next });
+  return r.ok ? null : r.reason;
 }

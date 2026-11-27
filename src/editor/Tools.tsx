@@ -6,7 +6,7 @@ import type { Vec } from '../shared';
 import { SnapMark } from './Calibrate';
 import type { Derived } from './Overlay';
 import { WallPreview } from './Overlay';
-import { holdAxis, pickAt, type Snap, type SnapIndex, snapCentre } from './snap';
+import { type CentreSnap, pickAt, secondEnd, type Snap, type SnapIndex, snapCentre } from './snap';
 
 const e = copy.editor;
 
@@ -82,14 +82,17 @@ export function useDeleteTool(c: EditorCtx): EditTool {
 }
 
 const SNAP_SHAPE: Record<string, Snap['to']> = { wall: 'end', end: 'end', between: 'line' };
+/** mm of the apartment under one screen pixel above which the wall tool asks to zoom in. */
+export const ZOOM_HINT_MM = 5;
 
 /**
  * A wall by its centre line (owner, round 13): a click at the middle of each end, the thickness typed. Between the two
  * clicks the body follows the pointer at that thickness, so that it can be seen to cover the drawn wall.
  */
-export function useWallTool(c: EditorCtx, fills: SnapIndex, plaster: Plaster | null): EditTool {
+export function useWallTool(c: EditorCtx, fills: SnapIndex, plaster: Plaster | null, mmPerPx: number): EditTool {
   const [first, setFirst] = useState<Vec | null>(null);
-  const [near, setNear] = useState<{ at: Vec; r: number } | null>(null);
+  // where the pointer is and where a click there would land: snapped once per move, not once per drawing
+  const [near, setNear] = useState<CentreSnap | null>(null);
   const [text, setText] = useState('10');
   const [material, setMaterial] = useState<WallMaterial | ''>('');
   useEffect(() => {
@@ -101,31 +104,30 @@ export function useWallTool(c: EditorCtx, fills: SnapIndex, plaster: Plaster | n
   // the centre-line ends of the walls already drawn (none before there is a project)
   const ends: Vec[] = (c.project?.existing.walls ?? []).flatMap(w => [[w.a.x / c.k, w.a.y / c.k], [w.b.x / c.k, w.b.y / c.k]] as Vec[]);
   const land = (at: Vec, r: number) => snapCentre(at, fills, r, c.k, ends);
-  const second = (to: Vec): Vec => (first ? holdAxis(first, to) : to);
+  // a snapped end stays where it snapped; only a free point is held to an axis
+  const second = (snap: CentreSnap): Vec => (first ? secondEnd(first, snap) : snap.at);
   return {
     pick: (at, r) => {
       if (thickness === null) return c.say(e.badThickness);
-      const point = land(at, r).at;
-      if (!first) return setFirst(point);
-      const result = c.run({ type: 'x.addWall', a: toMm(c.k, first), b: toMm(c.k, second(point)), thickness, ...(material ? { material } : {}) });
+      const snap = land(at, r);
+      if (!first) return setFirst(snap.at);
+      const result = c.run({ type: 'x.addWall', a: toMm(c.k, first), b: toMm(c.k, second(snap)), thickness, ...(material ? { material } : {}) });
       if (result.ok) setFirst(null);
     },
-    hover: (at, r) => setNear(at && { at, r }),
+    hover: (at, r) => setNear(at && land(at, r)),
     preview: ptPerPx => {
       if (!first || !near || thickness === null) return null;
-      return <WallPreview a={toMm(c.k, first)} b={toMm(c.k, second(land(near.at, near.r).at))} thickness={thickness} k={c.k} ptPerPx={ptPerPx} />;
+      return <WallPreview a={toMm(c.k, first)} b={toMm(c.k, second(near))} thickness={thickness} k={c.k} ptPerPx={ptPerPx} />;
     },
-    marks: ptPerPx => {
-      if (!near) return null;
-      const snap = land(near.at, near.r);
-      return <SnapMark snap={{ at: second(snap.at), to: snap.to && SNAP_SHAPE[snap.to] }} k={ptPerPx} />;
-    },
+    marks: ptPerPx => near && <SnapMark snap={{ at: second(near), to: near.to && SNAP_SHAPE[near.to] }} k={ptPerPx} />,
     panel: (
       <section aria-labelledby="wall-tool-title" className="wall-tool">
         <h2 id="wall-tool-title">{e.wall}</h2>
         <p aria-live="polite" data-testid="step">
           <strong>{first ? e.wallSecond : e.wallFirst}</strong>
         </p>
+        {/* owner R17: zoomed out, a click lands less well (40 % caught something else, measured) */}
+        <p aria-live="polite" data-testid="zoom-hint">{mmPerPx > ZOOM_HINT_MM ? e.zoomHint : ''}</p>
         <label>
           {e.thickness}{' '}
           <input dir="ltr" inputMode="decimal" value={text} aria-invalid={thickness === null} onChange={event => setText(event.target.value)} />

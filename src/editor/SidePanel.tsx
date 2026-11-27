@@ -1,4 +1,4 @@
-import { type ReactNode, useState } from 'react';
+import { type InputHTMLAttributes, type ReactNode, useState } from 'react';
 import { copy } from '../copy';
 import { dist } from '../model/geo';
 import { isInside } from '../model/kind';
@@ -12,11 +12,23 @@ const e = copy.editor;
 
 export type Question = { type: 'split'; room: Id; parts: Id[]; name: string } | { type: 'merge'; room: Id; names: string };
 
-/** Enter or leaving the field takes the typed value. */
-const onCommit = (take: (value: string) => void) => ({
-  onBlur: (event: { currentTarget: HTMLInputElement }) => take(event.currentTarget.value),
-  onKeyDown: (event: { key: string; currentTarget: HTMLInputElement }) => event.key === 'Enter' && take(event.currentTarget.value),
-});
+/**
+ * A text field that takes what is typed on Enter or on leaving it. It keeps the focus; what is refused goes back to the
+ * stored value; a stored value changed elsewhere (undo, say) shows at once.
+ */
+export function CommitField({ value, onCommit, ...rest }: { value: string; onCommit(text: string): boolean } & Omit<InputHTMLAttributes<HTMLInputElement>, 'value' | 'onChange'>) {
+  const [text, setText] = useState(value);
+  const [stored, setStored] = useState(value);
+  if (stored !== value) {
+    // adjusting to a new stored value while rendering, as React advises, rather than in an effect
+    setStored(value);
+    setText(value);
+  }
+  const take = () => {
+    if (text !== value && !onCommit(text)) setText(value);
+  };
+  return <input {...rest} value={text} onChange={event => setText(event.target.value)} onBlur={take} onKeyDown={event => event.key === 'Enter' && take()} />;
+}
 
 function WallDetails({ c, id, onFix }: { c: EditorCtx; id: Id; onFix(lock: Lock): void }) {
   const s = c.project.existing;
@@ -43,16 +55,16 @@ function WallDetails({ c, id, onFix }: { c: EditorCtx; id: Id; onFix(lock: Lock)
       </p>
       <label>
         {e.thickness}{' '}
-        <input
-          key={`${id}-${w.thickness}`}
+        <CommitField
+          key={id}
           dir="ltr"
           inputMode="decimal"
-          defaultValue={String(w.thickness / 10)}
-          {...onCommit(value => {
-            const mm = parseCm(value, { min: 20, max: 1000, decimals: 1 });
-            if (mm === null) return c.say(e.badThickness);
-            if (mm !== w.thickness) c.run({ type: 'x.setWall', id, thickness: mm });
-          })}
+          value={String(w.thickness / 10)}
+          onCommit={text => {
+            const mm = parseCm(text, { min: 20, max: 1000, decimals: 1 });
+            if (mm === null) return (c.say(e.badThickness), false);
+            return mm === w.thickness || c.run({ type: 'x.setWall', id, thickness: mm }).ok;
+          }}
         />
       </label>
       <div role="group" aria-label={e.classLabel}>
@@ -80,7 +92,7 @@ function WallDetails({ c, id, onFix }: { c: EditorCtx; id: Id; onFix(lock: Lock)
   );
 }
 
-function RoomDetails({ c, id, plaster }: { c: EditorCtx; id: Id; plaster: Plaster | null }) {
+function RoomDetails({ c, id, plaster, onFix }: { c: EditorCtx; id: Id; plaster: Plaster | null; onFix(lock: Lock): void }) {
   const room = c.project.existing.rooms.find(r => r.id === id);
   const m = c.derived.gross.get(id);
   if (!room || !m) return null;
@@ -89,7 +101,7 @@ function RoomDetails({ c, id, plaster }: { c: EditorCtx; id: Id; plaster: Plaste
       <h2 id="selected-title">{e.room}</h2>
       <label>
         {e.roomName}{' '}
-        <input key={`${id}-${room.name}`} defaultValue={room.name} {...onCommit(name => name !== room.name && c.run({ type: 'x.setRoom', id, name }))} />
+        <CommitField key={id} value={room.name} onCommit={name => c.run({ type: 'x.setRoom', id, name }).ok} />
       </label>
       <label>
         <input type="checkbox" checked={room.inApartment} onChange={event => c.run({ type: 'x.setRoom', id, inApartment: event.target.checked })} /> {e.inApartment}
@@ -98,7 +110,8 @@ function RoomDetails({ c, id, plaster }: { c: EditorCtx; id: Id; plaster: Plaste
         <input type="checkbox" checked={room.outdoor} onChange={event => c.run({ type: 'x.setRoom', id, outdoor: event.target.checked })} /> {e.outdoor}
       </label>
       <label>
-        <input type="checkbox" checked={room.isMamad} onChange={event => c.run({ type: 'setMamad', room: event.target.checked ? id : null })} /> {e.isMamad}
+        {/* taking the mark back is the mamad's "תיקון" (owner R14): its row with "אישור" follows */}
+        <input type="checkbox" checked={room.isMamad} onChange={event => (event.target.checked ? c.run({ type: 'setMamad', room: id }) : onFix('mamad'))} /> {e.isMamad}
       </label>
       <p data-testid="measurement">
         <strong>{e.area(formatM2(m.areaMm2))}</strong> {copy.byDrawing}
@@ -162,14 +175,15 @@ export function SidePanel({ c, selected, message, question, onQuestionDone, mama
           {e.envelopeOpen} <button type="button" onClick={() => c.run({ type: 'x.confirmEnvelope' })}>{e.confirm}</button>
         </p>
       )}
-      {mamadWas && (
+      {/* while the mark is taken back: after "אישור", or an undo of the release, no room is left unmarked */}
+      {mamadWas && !c.project.existing.rooms.some(r => r.isMamad) && (
         <p className="lock">
           {e.mamadOpen(mamadWas.name)} <button type="button" onClick={onConfirmMamad}>{e.confirm}</button>
         </p>
       )}
       {tool}
       {selected?.kind === 'wall' && <WallDetails c={c} id={selected.id} onFix={onFix} />}
-      {selected?.kind === 'room' && <RoomDetails c={c} id={selected.id} plaster={plaster} />}
+      {selected?.kind === 'room' && <RoomDetails c={c} id={selected.id} plaster={plaster} onFix={onFix} />}
       <Legend paints={paints} />
     </div>
   );

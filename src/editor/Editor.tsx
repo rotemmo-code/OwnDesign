@@ -1,4 +1,4 @@
-import { type ReactNode, useMemo, useState } from 'react';
+import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { copy } from '../copy';
 import type { Action, Id, Plaster, Result } from '../model/types';
 import type { ExtractedPage } from '../pdf/extract';
@@ -15,7 +15,7 @@ const e = copy.editor;
  * The editor of the existing state, as a tool of the page's one Canvas: its marks, its row of tools and its panel.
  * null until there is a project. It opens on the measure tool, which shows what the calibration found.
  */
-export function useEditor({ store, page, plaster, measure }: { store: Store; page: ExtractedPage; plaster: Plaster | null; measure: Tool }) {
+export function useEditor({ store, page, plaster, measure, ptPerPx }: { store: Store; page: ExtractedPage; plaster: Plaster | null; measure: Tool; ptPerPx: number }) {
   // only the drawing's filled shapes: a wall's faces and ends are their edges, a hatch or a dimension line is not
   const fills = useMemo(() => snapIndex({ ...page, paths: page.paths.filter(p => p.fill) }), [page]);
   const [tool, setTool] = useState<ToolName>('measure');
@@ -27,10 +27,19 @@ export function useEditor({ store, page, plaster, measure }: { store: Store; pag
   const project = store.project;
   const k = project?.calibration.mmPerPt ?? 1;
   const derived = useMemo(() => project && derive(project), [project?.existing, project?.envelope, project?.wallClass]);
+  // what the editor's own last action made; any other change (undo, redo, a load) leaves no message or question behind
+  const ran = useRef<unknown>(null);
+  useEffect(() => {
+    if (!project || project === ran.current) return;
+    setMessage('');
+    const rooms = new Set(project.existing.rooms.map(r => r.id));
+    setQuestion(q => (q && rooms.has(q.room) && (q.type === 'merge' || q.parts.every(part => rooms.has(part))) ? q : null));
+  }, [project]);
 
   const run = (a: Action): Result => {
     const before = store.project!;
     const r = store.dispatch(a);
+    if (r.ok) ran.current = r.project;
     if (!r.ok) {
       setMessage(copy.reason[r.reason] ?? e.reasonOther);
       return r;
@@ -57,10 +66,10 @@ export function useEditor({ store, page, plaster, measure }: { store: Store; pag
   const stub = { project: null, derived: null } as unknown as EditorCtx;
   const select = useSelectTool(ctx ?? stub);
   const remove = useDeleteTool(ctx ?? stub);
-  const wall = useWallTool(ctx ?? stub, fills, plaster);
+  const wall = useWallTool(ctx ?? stub, fills, plaster, ptPerPx * k);
   if (!project || !derived || !ctx) return null;
 
-  const tools: Record<ToolName, EditTool> = { select, wall, remove, measure: { ...measure, panel: measure.panel } };
+  const tools: Record<ToolName, EditTool> = { select, wall, remove, measure };
   const active = tools[tool];
   const fix = (lock: Lock) => {
     if (lock === 'envelope') return void run({ type: 'x.releaseEnvelope' });
@@ -70,7 +79,8 @@ export function useEditor({ store, page, plaster, measure }: { store: Store; pag
   const confirmMamad = () => {
     if (!mamadWas) return;
     if (!project.existing.rooms.some(r => r.id === mamadWas.id)) return setMessage(e.mamadChanged);
-    if (run({ type: 'setMamad', room: mamadWas.id }).ok) setMamadWas(null);
+    // kept: should an undo take the mark back again, the row asks again
+    run({ type: 'setMamad', room: mamadWas.id });
   };
   const marks = (ptPerPx: number): ReactNode => (
     <Overlay

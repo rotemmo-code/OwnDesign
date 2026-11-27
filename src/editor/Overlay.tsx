@@ -83,7 +83,7 @@ export function Overlay({ project, derived, k, ptPerPx, selected, preview, marks
       <g key={r.id} className="room-label" data-room={r.id} fontSize={14 * px} strokeWidth={4 * px}>
         {part >= 0 && <text x={at.x} y={at.y - 22 * px} fontWeight="700" fontSize={20 * px}>{part + 1}</text>}
         <text x={at.x} y={at.y - 4 * px} fontWeight="700">{r.name || copy.editor.unnamed}</text>
-        <text x={at.x} y={at.y + 14 * px}>{formatM2(derived.gross.get(r.id)?.areaMm2 ?? 0)} מ"ר</text>
+        <text x={at.x} y={at.y + 14 * px}>{copy.editor.m2(formatM2(derived.gross.get(r.id)?.areaMm2 ?? 0))}</text>
       </g>
     );
   };

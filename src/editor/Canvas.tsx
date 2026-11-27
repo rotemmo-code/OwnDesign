@@ -30,14 +30,12 @@ type Props = {
   children?: ReactNode | ((ptPerPx: number) => ReactNode);
   /** The contractor's page from 20 to 100 % strength under the draft; never saved. */
   strength?: number;
-  /** A new number puts the whole page back in the frame, centred: what "כל העמוד" and the key 0 do too. */
-  resetTurn?: number;
-  /** The zoom in percent: 100 = the whole page fits the frame. */
-  onZoom?(percent: number): void;
+  /** View points per CSS pixel, whenever the view or the frame changes. */
+  onScale?(ptPerPx: number): void;
 };
 
 /** The page, and over it whatever is drawn in view points. */
-export function Canvas({ page, pageNo, picture, draw, onPick, onHover, children, strength = 100, resetTurn = 0, onZoom }: Props) {
+export function Canvas({ page, pageNo, picture, draw, onPick, onHover, children, strength = 100, onScale }: Props) {
   const frame = useRef<HTMLDivElement>(null);
   const svg = useRef<SVGSVGElement>(null);
   const [view, setView] = useState<Box>(() => whole(page));
@@ -62,10 +60,8 @@ export function Canvas({ page, pageNo, picture, draw, onPick, onHover, children,
   const radius = () => SNAP_PX / svg.current!.getScreenCTM()!.a; // CSS pixels per view point
   const zoom = (factor: number) => setView(old => zoomed(old, page, [old[0] + old[2] / 2, old[1] + old[3] / 2], factor));
   const move = (dx: number, dy: number) => setView(old => moved(old, [dx, dy]));
-  /** The one whole-page view: the reset button, "כל העמוד" and the key 0. */
+  /** The one whole-page view, fitted and centred: the "איפוס תצוגה" button and the key 0 (owner R15). */
   const fit = () => setView(whole(page));
-  useEffect(() => void (resetTurn && fit()), [resetTurn]);
-  useEffect(() => onZoom?.((page.widthPt / view[2]) * 100), [view, onZoom]);
 
   useLayoutEffect(() => {
     const measure = () => {
@@ -147,6 +143,7 @@ export function Canvas({ page, pageNo, picture, draw, onPick, onHover, children,
   }, [view, size]);
 
   const ptPerPx = devicePixelRatio / layout(view, size).scale;
+  useEffect(() => onScale?.(ptPerPx), [ptPerPx, onScale]);
   return (
     <>
       <div className="frame" ref={frame} style={strength === 100 ? undefined : { ['--plan' as string]: strength / 100 }}>
@@ -227,6 +224,11 @@ export function Canvas({ page, pageNo, picture, draw, onPick, onHover, children,
           <button type="button" onClick={() => zoom(NOTCH)}>{copy.zoomIn}</button>
           <button type="button" onClick={() => zoom(1 / NOTCH)}>{copy.zoomOut}</button>
           <button type="button" onClick={fit}>{copy.fit}</button>
+          {/* 100 % = the whole page in the frame */}
+          <span className="zoom" data-testid="zoom">
+            <span className="hidden-label">{copy.editor.zoom} </span>
+            {copy.editor.percent(Math.round((page.widthPt / view[2]) * 100))}
+          </span>
         </div>
         <p id="canvas-help" dir="rtl">{copy.help}</p>
       </div>

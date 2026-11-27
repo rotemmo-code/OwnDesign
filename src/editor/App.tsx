@@ -14,7 +14,8 @@ import './editor.css';
 import { useMeasure } from './MeasureTool';
 import { snapIndex } from './snap';
 import { Upload } from './Upload';
-import { newProject, type Store, useProject } from './useProject';
+import { CommitField } from './SidePanel';
+import { newProject, rescaled, type Store, useProject } from './useProject';
 
 /** turn: of the request that showed it, so that a page shown again starts afresh. */
 type Shown = { pageNo: number; page: ExtractedPage; picture: Picture; turn: number };
@@ -38,14 +39,18 @@ export function App() {
   const latest = useRef(store);
   latest.current = store;
 
-  // Ctrl+Z, Ctrl+Y and Ctrl+Shift+Z, but not while typing: a field keeps its own undo
+  // Once there is a project it alone holds the scale and the plaster answer: undo takes them back with everything else.
+  const scale = project?.calibration ?? calibration;
+  const plasterNow = project ? project.plaster : plaster;
+
+  // Ctrl+Z, Ctrl+Y and Ctrl+Shift+Z, but not while typing text: a text field keeps its own undo. By the key's place, not its
+  // letter: on a Hebrew layout Ctrl+Z gives the key 'ז'.
   useEffect(() => {
     const keys = (event: KeyboardEvent) => {
-      const typing = event.target instanceof HTMLElement && (event.target.isContentEditable || event.target.matches('input, textarea, select'));
+      const typing = event.target instanceof HTMLElement && (event.target.isContentEditable || event.target.matches('textarea, input:not([type=checkbox], [type=radio], [type=range], [type=button], [type=submit], [type=file])'));
       if (typing || !(event.ctrlKey || event.metaKey) || event.altKey || !latest.current.project) return;
-      const key = event.key.toLowerCase();
-      if (key === 'z' && !event.shiftKey) latest.current.undo();
-      else if (key === 'y' || (key === 'z' && event.shiftKey)) latest.current.redo();
+      if (event.code === 'KeyZ' && !event.shiftKey) latest.current.undo();
+      else if (event.code === 'KeyY' || (event.code === 'KeyZ' && event.shiftKey)) latest.current.redo();
       else return;
       event.preventDefault();
     };
@@ -116,9 +121,8 @@ export function App() {
   /** The first accepted scale makes the project; a later one scales what was drawn, or is refused and the old one stays. */
   async function calibrated(next: Calibration) {
     if (latest.current.project) {
-      const scaled = latest.current.dispatch({ type: 'rescale', calibration: next });
-      if (!scaled.ok) return setProblem(copy.reason[scaled.reason] ?? copy.editor.reasonOther);
-      return setCalibration(next);
+      const refused = rescaled(latest.current, next);
+      return refused ? setProblem(copy.reason[refused] ?? copy.editor.reasonOther) : setCalibration(next);
     }
     setCalibration(next);
     const mine = turn.current;
@@ -163,11 +167,11 @@ export function App() {
       </header>
       <p role="status">{busy ? copy.opening : pages.length > 0 && !shown && !problem ? copy.whichPage(pages.length) : ''}</p>
       <p role="alert">{problem}</p>
-      {calibration && !calibration.verified && <p className="unverified" aria-live="polite">{copy.unverified}</p>}
+      {scale && !scale.verified && <p className="unverified" aria-live="polite">{copy.unverified}</p>}
       {/* ltr: the drawing never mirrors with the RTL page */}
       <div dir="ltr" data-testid="drawing" ref={drawing}>
         {shown && (
-          <Work key={shown.turn} shown={shown} draw={draw} calibration={calibration} onCalibration={next => void calibrated(next)} plaster={plaster} onPlaster={answerPlaster} store={store} />
+          <Work key={shown.turn} shown={shown} draw={draw} calibration={scale} onCalibration={next => void calibrated(next)} plaster={plasterNow} onPlaster={answerPlaster} store={store} />
         )}
       </div>
     </main>
@@ -188,16 +192,13 @@ type WorkProps = {
 function ProjectBar({ store }: { store: Store }) {
   const e = copy.editor;
   const project = store.project!;
-  const take = (input: HTMLInputElement) => {
-    const name = input.value;
-    if (!name.trim()) input.value = project.name; // an empty name is not taken
-    else if (name !== project.name) store.dispatch({ type: 'setName', name });
-  };
+
   return (
     <>
       <label className="project-name">
         {e.name}{' '}
-        <input key={project.name} defaultValue={project.name} maxLength={200} onBlur={event => take(event.currentTarget)} onKeyDown={event => event.key === 'Enter' && take(event.currentTarget)} />
+        {/* an empty name is not taken */}
+        <CommitField value={project.name} maxLength={200} onCommit={name => !!name.trim() && store.dispatch({ type: 'setName', name }).ok} />
       </label>
       <div role="tablist" aria-label={e.states}>
         <button type="button" role="tab" aria-selected="true">{e.existing}</button>
@@ -219,25 +220,20 @@ export function Work({ shown: { page, pageNo, picture }, draw, calibration, onCa
     onCalibration(next);
   });
   const measure = useMeasure(index, calibration, plaster, () => setAgain(true));
-  const editor = useEditor({ store, page, plaster, measure });
-  const [resetTurn, setResetTurn] = useState(0);
-  const [zoom, setZoom] = useState(100);
+  const [ptPerPx, setPtPerPx] = useState(1);
+  const editor = useEditor({ store, page, plaster, measure, ptPerPx });
   // the editor once there is a project, and never while recalibrating
   const edit = calibration && !again ? editor : null;
   const tool = edit ?? (calibration && !again ? measure : calibrate);
   return (
     <>
-      <Canvas page={page} pageNo={pageNo} picture={picture} draw={draw} onPick={tool.pick} onHover={tool.hover} strength={edit?.strength} resetTurn={resetTurn} onZoom={setZoom}>
-        {tool.marks}
-      </Canvas>
-      {/* after the drawing in the keyboard's order, at the top on the screen */}
+      {/* the editor's tools come before the drawing, on the screen and for the keyboard; always there, so that the Canvas keeps its place */}
       <div className="view-row" dir="rtl">
         {edit?.head}
-        <span className="reset">
-          <button type="button" onClick={() => setResetTurn(n => n + 1)}>{copy.editor.reset}</button>{' '}
-          <span aria-label={copy.editor.zoom} data-testid="zoom">{copy.editor.percent(Math.round(zoom))}</span>
-        </span>
       </div>
+      <Canvas page={page} pageNo={pageNo} picture={picture} draw={draw} onPick={tool.pick} onHover={tool.hover} strength={edit?.strength} onScale={setPtPerPx}>
+        {tool.marks}
+      </Canvas>
       <aside dir="rtl" className="panel">
         {tool.panel}
       </aside>
