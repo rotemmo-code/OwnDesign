@@ -181,3 +181,18 @@ Added: the signed difference on every row, and a mark on the one dimension that 
 others, worded as an invitation to check (in that first attempt the three that agreed were the wrong
 ones). Review tightened the rule until random tests marked no correct row. Tests: 591 unit, 43 edge,
 254 browser. Pages: [pdf-importer](pdf-importer.md).
+
+## [2026-11-27] feature | PDF importer: editor screen, part 1 (walls, rooms, locks, undo)
+The user tried three ways of drawing a wall in a throwaway try-out and chose two clicks on the
+wall's centre line with a typed thickness, against the recommendation (corners of a face). To cover
+its weak point the snap was measured on 16 private drawings (ids only): mean error 35 mm with the
+whole page on screen, 6 mm zoomed in, so the tool asks to zoom in while a screen pixel covers more
+than 5 mm, snaps midway between the two faces of a wall, and holds a free point to the axis. Also
+from the user: a material per wall (a small model change), a plaster note, no lock icons (class and
+lock are told by paint and words), buttons of one size, and one view-reset control. A hand-drawn
+project starts with its outer walls open, because they are unknown until rooms are marked. Review:
+six important findings fixed in two rounds (undo of a recalibration left the screen on the old
+scale; two silent ways to unlock the protected room; the axis hold moved a snapped wall end by
+60 mm; keyboard order). Tests: 623 unit, 43 edge, 354 browser. Not checked: real hands on real
+drawings, a real Hebrew keyboard, screen readers, Edge, Safari, drawings of 480 walls and more.
+Pages: [pdf-importer](pdf-importer.md).

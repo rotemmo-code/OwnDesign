@@ -34,9 +34,10 @@ measurements. Source: [`../pdf-importer/`](../pdf-importer/README.md).
 | One checked transition for every edit of the existing state: reasons for refusals, undo, and a lock that keeps the protected room (mamad) unchanged | `pdf-importer/src/model/apply.ts`, `existing.ts`, `rules.ts`, `history.ts` |
 | Finish layers (plaster or cladding) per wall side and free wall end; the room that is left after them (net against gross) | `pdf-importer/src/model/finish.ts` |
 | Project file (open, save, download) and an autosave draft in IndexedDB; an old draft is never deleted without asking | `pdf-importer/src/storage/` |
+| Editor screen, part 1: walls drawn by their centre line with a typed thickness and a material, rooms with name and area, paint and legend per wall kind and class (no lock icons), locks with a note and a deliberate release, undo and redo, one view-reset control with the zoom percentage | `pdf-importer/src/editor/Editor.tsx`, `Tools.tsx`, `Overlay.tsx`, `SidePanel.tsx`, `Legend.tsx`, `useProject.ts` |
 
-Not built yet: the editor screen, the save buttons, wall detection, the planned state, PDF
-output. Image-only (scanned) PDFs are out of scope.
+Not built yet: doors, windows and finishes in the editor, the guided check before approval, the
+save buttons, wall detection, the planned state, PDF output. Image-only (scanned) PDFs are out of scope.
 
 ## How it is developed
 
@@ -47,8 +48,8 @@ defects, for example a diagonal wall touching another only by a corner that left
 ## Tests
 
 `cd pdf-importer && npm ci && npm run verify`: typecheck, unit, edge, regression and browser tests
-(Chromium and Firefox), then `npm audit`. After the calibration follow-up was merged: 591 unit, 43 edge and
-254 browser tests pass; the 20 regression tests need private sample drawings and skip without them.
+(Chromium and Firefox), then `npm audit`. After the first part of the editor screen was merged: 623 unit, 43 edge and
+354 browser tests pass; the 20 regression tests need private sample drawings and skip without them.
 
 ## Privacy
 
