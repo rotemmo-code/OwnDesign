@@ -195,3 +195,154 @@ function crossing(seg: Float64Array, i: number, j: number): Vec | null {
   const u = ((bx - ax) * ry - (by - ay) * rx) / den;
   return t >= 0 && t <= 1 && u >= 0 && u <= 1 ? [ax + t * rx, ay + t * ry] : null;
 }
+
+/** Where a click of the wall tool lands (its centre line), and on what. */
+export type CentreSnap = { at: Vec; to: 'wall' | 'end' | 'between' | null };
+const MIN_WALL = 30; // mm: the thinnest wall the drawing's faces are taken for
+const MAX_WALL = 600;
+const ALONG = Math.sin((2 * Math.PI) / 180); // two edges meet square, or a click is held to an axis, within 2 degrees
+const PARALLEL = Math.sin(Math.PI / 180); // two faces of one wall, within 1 degree
+const TOUCH_PT = 0.5;
+
+/** The pieces that pass within r of p, nearest first, at most NEAREST. */
+function piecesNear(index: SnapIndex, [px, py]: Vec, r: number): number[] {
+  const { seg, first, items, long, cell, cols, rows, seen } = index;
+  const stamp = ++index.stamp;
+  const near: { s: number; d2: number }[] = [];
+  const look = (s: number) => {
+    if (seen[s] === stamp) return;
+    seen[s] = stamp;
+    const [x, y] = nearestOn(seg, s, px, py);
+    const d2 = (x - px) ** 2 + (y - py) ** 2;
+    if (d2 <= r * r) near.push({ s, d2 });
+  };
+  const [c0, c1] = [clamp(Math.floor((px - r) / cell), cols), clamp(Math.floor((px + r) / cell), cols)];
+  const [r0, r1] = [clamp(Math.floor((py - r) / cell), rows), clamp(Math.floor((py + r) / cell), rows)];
+  for (let row = r0; row <= r1; row++) for (let c = c0; c <= c1; c++) for (let k = first[row * cols + c]; k < first[row * cols + c + 1]; k++) look(items[k]);
+  for (const s of long) look(s);
+  return near.sort((a, b) => a.d2 - b.d2).slice(0, NEAREST).map(n => n.s);
+}
+const piece = (seg: Float64Array, s: number) => {
+  const [ax, ay, bx, by] = seg.subarray(s * 4, s * 4 + 4);
+  const length = Math.hypot(bx - ax, by - ay);
+  return { a: [ax, ay] as Vec, b: [bx, by] as Vec, length, u: [(bx - ax) / length, (by - ay) / length] as Vec };
+};
+const cross = (u: Vec, v: Vec) => u[0] * v[1] - u[1] * v[0];
+
+/**
+ * The middle of a drawing edge that closes a wall's end: 30 to 600 mm long, with an edge leaving each of its ends square
+ * to it and to the same side (the wall's two faces). The nearest within r, or null.
+ */
+function endMiddle(index: SnapIndex, p: Vec, r: number, mmPerPt: number): Vec | null {
+  const { seg } = index;
+  let best: Vec | null = null;
+  let bestD = r;
+  for (const s of piecesNear(index, p, r)) {
+    const e = piece(seg, s);
+    if (e.length * mmPerPt < MIN_WALL || e.length * mmPerPt > MAX_WALL) continue;
+    const mid: Vec = [(e.a[0] + e.b[0]) / 2, (e.a[1] + e.b[1]) / 2];
+    const d = Math.hypot(mid[0] - p[0], mid[1] - p[1]);
+    if (d > bestD) continue;
+    // the sides to which a face leaves an end (+1, -1); a corner where two walls meet has faces on both
+    const sides = (end: Vec) => {
+      const found = new Set<number>();
+      for (const q of piecesNear(index, end, TOUCH_PT)) {
+        if (q === s) continue;
+        const f = piece(seg, q);
+        const far = Math.hypot(f.a[0] - end[0], f.a[1] - end[1]) <= TOUCH_PT ? f.b : Math.hypot(f.b[0] - end[0], f.b[1] - end[1]) <= TOUCH_PT ? f.a : null;
+        if (!far) continue;
+        const v: Vec = [far[0] - end[0], far[1] - end[1]];
+        const l = Math.hypot(...v);
+        if (l * mmPerPt < MIN_WALL) continue; // a face is no sliver
+        if (Math.abs((v[0] * e.u[0] + v[1] * e.u[1]) / l) <= ALONG) found.add(Math.sign(cross(e.u, v)));
+      }
+      return found;
+    };
+    const [sa, sb] = [sides(e.a), sides(e.b)];
+    if ([...sa].some(side => side !== 0 && sb.has(side))) [best, bestD] = [mid, d];
+  }
+  return best;
+}
+
+/**
+ * Midway between two parallel drawing edges 30 to 600 mm apart, one on each side of p (a wall's two faces); of several
+ * pairs, the closest one. The point moves across the wall only, and only within r. Null when there is none.
+ */
+function between(index: SnapIndex, p: Vec, r: number, mmPerPt: number): Vec | null {
+  const { seg } = index;
+  const lines = piecesNear(index, p, MAX_WALL / mmPerPt / 2 + r).flatMap(s => {
+    const e = piece(seg, s);
+    const u: Vec = e.u[0] > 1e-9 || (Math.abs(e.u[0]) <= 1e-9 && e.u[1] > 0) ? e.u : [-e.u[0], -e.u[1]];
+    const t = (p[0] - e.a[0]) * e.u[0] + (p[1] - e.a[1]) * e.u[1];
+    if (t < 0 || t > e.length) return []; // p must lie beside the edge, not beyond its ends
+    return [{ u, d: cross(u, [p[0] - e.a[0], p[1] - e.a[1]]) }];
+  });
+  let best: { gap: number; off: number; u: Vec } | null = null;
+  for (const f of lines)
+    for (const g of lines) {
+      if (f.d <= 0 || g.d >= 0 || Math.abs(cross(f.u, g.u)) > PARALLEL) continue;
+      const gap = f.d - g.d;
+      const off = (f.d + g.d) / 2;
+      if (gap * mmPerPt < MIN_WALL || gap * mmPerPt > MAX_WALL || Math.abs(off) > r) continue;
+      if (!best || gap < best.gap - 1e-9 || (Math.abs(gap - best.gap) <= 1e-9 && Math.abs(off) < Math.abs(best.off))) best = { gap, off, u: f.u };
+    }
+  // cross(u, v) is v's part along (-u.y, u.x): take off of it away
+  return best && [p[0] + best.u[1] * best.off, p[1] - best.u[0] * best.off];
+}
+
+/**
+ * Where a click of the wall tool lands, in view points. In this order: the centre-line end of a wall already drawn
+ * (`ends`), the middle of a drawing edge that closes a wall's end, the point midway between a wall's two faces (when
+ * `betweenFaces`), else the point itself. Never a point on a face: the tool draws by the centre line.
+ */
+export function snapCentre(p: Vec, index: SnapIndex, radiusPt: number, mmPerPt: number, ends: Vec[] = [], betweenFaces = true): CentreSnap {
+  let wall: Vec | null = null;
+  let d = radiusPt;
+  for (const q of ends) {
+    const e = Math.hypot(q[0] - p[0], q[1] - p[1]);
+    if (e <= d) [wall, d] = [q, e];
+  }
+  if (wall) return { at: wall, to: 'wall' };
+  const end = endMiddle(index, p, radiusPt, mmPerPt);
+  if (end) return { at: end, to: 'end' };
+  const mid = betweenFaces ? between(index, p, radiusPt, mmPerPt) : null;
+  return mid ? { at: mid, to: 'between' } : { at: p, to: null };
+}
+
+/** The second end, held to the horizontal or vertical through the first when it is within 2 degrees of it. */
+export function holdAxis(from: Vec, to: Vec): Vec {
+  const [dx, dy] = [to[0] - from[0], to[1] - from[1]];
+  const l = Math.hypot(dx, dy);
+  if (!l) return to;
+  if (Math.abs(dy) / l <= ALONG) return [to[0], from[1]];
+  if (Math.abs(dx) / l <= ALONG) return [from[0], to[1]];
+  return to;
+}
+
+/** What a click of the select or delete tool takes: a wall (the nearest whose body is within r), else the room under it. */
+export type Hit = { kind: 'wall' | 'room'; id: string } | null;
+type Mm = { x: number; y: number };
+const toSegment = (p: Mm, a: Mm, b: Mm) => {
+  const l2 = (b.x - a.x) ** 2 + (b.y - a.y) ** 2;
+  const t = l2 ? Math.max(0, Math.min(1, ((p.x - a.x) * (b.x - a.x) + (p.y - a.y) * (b.y - a.y)) / l2)) : 0;
+  return Math.hypot(p.x - a.x - (b.x - a.x) * t, p.y - a.y - (b.y - a.y) * t);
+};
+const inRing = (ring: Mm[], p: Mm) => {
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++)
+    if (ring[i].y > p.y !== ring[j].y > p.y && p.x < ((ring[j].x - ring[i].x) * (p.y - ring[i].y)) / (ring[j].y - ring[i].y) + ring[i].x) inside = !inside;
+  return inside;
+};
+/** In mm. A room's hole is not the room. */
+export function pickAt(p: Mm, s: { walls: { id: string; a: Mm; b: Mm; thickness: number; status?: string }[]; rooms: { id: string; boundary: Mm[]; holes: Mm[][] }[] }, radiusMm: number): Hit {
+  let best: Hit = null;
+  let bestD = Infinity;
+  for (const w of s.walls) {
+    if (w.status === 'removed') continue;
+    const d = toSegment(p, w.a, w.b) - w.thickness / 2;
+    if (d <= radiusMm && d < bestD) [best, bestD] = [{ kind: 'wall', id: w.id }, d];
+  }
+  if (best) return best;
+  const room = s.rooms.find(r => inRing(r.boundary, p) && !r.holes.some(h => inRing(h, p)));
+  return room ? { kind: 'room', id: room.id } : null;
+}
