@@ -146,3 +146,29 @@ it('rescaled: a later scale scales what was drawn; a refusal is passed on and no
   expect(rescaled(refusing, calibration)).toBe('invalid-geometry');
   expect(rescaled(store, { ...calibration, mmPerPt: -1 })).toBe('invalid-number');
 });
+
+it('released: the mamad whose mark was taken back, read from the history; nothing before the first mark or after a load', () => {
+  const store = createStore();
+  store.load(open());
+  expect(store.released).toBeNull();
+  store.dispatch({ type: 'setMamad', room: 'room-b' });
+  expect(store.released).toBeNull();
+  store.dispatch({ type: 'setMamad', room: null }); // "תיקון"
+  expect(store.released).toEqual({ id: 'room-b', name: 'B' });
+  store.dispatch({ type: 'setName', name: 'meanwhile' });
+  expect(store.released).toEqual({ id: 'room-b', name: 'B' });
+  store.dispatch({ type: 'setMamad', room: 'room-b' }); // "אישור"
+  expect(store.released).toBeNull();
+  store.undo();
+  expect(store.released).toEqual({ id: 'room-b', name: 'B' });
+  store.undo();
+  store.undo();
+  expect(store.released).toBeNull(); // the mark itself
+  store.undo();
+  expect(store.released).toBeNull(); // before it: nothing was ever released
+  store.redo();
+  store.redo();
+  expect(store.released).toEqual({ id: 'room-b', name: 'B' });
+  store.load(open());
+  expect(store.released).toBeNull();
+});

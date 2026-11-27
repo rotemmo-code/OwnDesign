@@ -18,6 +18,11 @@ export type Store = {
   canRedo: boolean;
   /** The project is not the last one saved or loaded. */
   dirty: boolean;
+  /**
+   * The mamad whose mark was taken back to correct it, read from the history: none is marked now, and the entry before this run
+   * of unmarked ones had one. null before any mark, while one is marked, and after a load (history starts afresh).
+   */
+  released: { id: Id; name: string } | null;
   /** Task 12: the project that was written; an edit made while it was written stays dirty. */
   markSaved(saved: Project): void;
   /** The file schema first, then the rooms computed again from the walls; history starts afresh. null: loaded. */
@@ -32,11 +37,19 @@ export function createStore(): ProjectStore {
   let history = createHistory();
   let saved: Project | null = null;
   const listeners = new Set<() => void>();
+  // per project of the history: kept with the object itself, so that undo and redo find it again
+  const releasedOf = new WeakMap<Project, Store['released']>();
+  const mamadOf = (p: Project) => p.existing.rooms.find(r => r.isMamad);
+  const follow = (before: Project, after: Project) => {
+    const was = mamadOf(before);
+    releasedOf.set(after, mamadOf(after) ? null : was ? { id: was.id, name: was.name } : (releasedOf.get(before) ?? null));
+  };
   const methods = {
     dispatch(a: Action): Result {
       if (!snapshot.project) return { ok: false, reason: 'invalid-action' };
       const r = apply(snapshot.project, a);
       if (r.ok && r.project !== snapshot.project) {
+        follow(snapshot.project, r.project);
         history.push(r.project);
         set(r.project);
       }
@@ -65,6 +78,7 @@ export function createStore(): ProjectStore {
       const q = { ...p, existing: { ...p.existing, rooms } };
       history = createHistory();
       history.push(q);
+      releasedOf.set(q, null);
       saved = q;
       set(q);
       return null;
@@ -76,9 +90,10 @@ export function createStore(): ProjectStore {
     },
   };
   // a new object on every change: React compares snapshots by identity
-  let snapshot: Store = { ...methods, project: null, canUndo: false, canRedo: false, dirty: false };
+  let snapshot: Store = { ...methods, project: null, canUndo: false, canRedo: false, dirty: false, released: null };
   function set(project: Project | null) {
-    snapshot = { ...methods, project, canUndo: history.canUndo(), canRedo: history.canRedo(), dirty: project !== saved };
+    const released = (project && releasedOf.get(project)) ?? null;
+    snapshot = { ...methods, project, canUndo: history.canUndo(), canRedo: history.canRedo(), dirty: project !== saved, released };
     for (const fn of listeners) fn();
   }
   return {
@@ -94,6 +109,9 @@ export function createStore(): ProjectStore {
     },
     get dirty() {
       return snapshot.dirty;
+    },
+    get released() {
+      return snapshot.released;
     },
     subscribe(fn: () => void) {
       listeners.add(fn);

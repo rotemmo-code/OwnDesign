@@ -22,7 +22,6 @@ export function useEditor({ store, page, plaster, measure, ptPerPx }: { store: S
   const [selected, setSelected] = useState<Selected>(null);
   const [message, setMessage] = useState('');
   const [question, setQuestion] = useState<Question | null>(null);
-  const [mamadWas, setMamadWas] = useState<{ id: Id; name: string } | null>(null);
   const [strength, setStrength] = useState(100);
   const project = store.project;
   const k = project?.calibration.mmPerPt ?? 1;
@@ -78,13 +77,13 @@ export function useEditor({ store, page, plaster, measure, ptPerPx }: { store: S
   const fix = (lock: Lock) => {
     if (lock === 'envelope') return void run({ type: 'x.releaseEnvelope' });
     const room = project.existing.rooms.find(r => r.isMamad);
-    if (room && run({ type: 'setMamad', room: null }).ok) setMamadWas({ id: room.id, name: room.name || e.unnamed });
+    if (room) run({ type: 'setMamad', room: null }); // the history remembers it: store.released
   };
+  const released = store.released;
   const confirmMamad = () => {
-    if (!mamadWas) return;
-    if (!project.existing.rooms.some(r => r.id === mamadWas.id)) return setMessage(e.mamadChanged);
-    // kept: should an undo take the mark back again, the row asks again
-    run({ type: 'setMamad', room: mamadWas.id });
+    if (!released) return;
+    if (!project.existing.rooms.some(r => r.id === released.id)) return setMessage(e.mamadChanged);
+    run({ type: 'setMamad', room: released.id });
   };
   const marks = (ptPerPx: number): ReactNode => (
     <Overlay
@@ -121,7 +120,7 @@ export function useEditor({ store, page, plaster, measure, ptPerPx }: { store: S
         message={message}
         question={question}
         onQuestionDone={() => setQuestion(null)}
-        mamadWas={mamadWas}
+        mamadWas={released && { id: released.id, name: released.name || e.unnamed }}
         onFix={fix}
         onConfirmMamad={confirmMamad}
         tool={active.panel}

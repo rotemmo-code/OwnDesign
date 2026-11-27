@@ -930,3 +930,15 @@ test('renaming the project leaves the load-bearing warning and a gone room\'s se
   await page.waitForTimeout(300);
   await expect(message(page)).toHaveText(e.gone(e.unnamed));
 });
+
+test('no release row where she never released: mark, תיקון, אישור, then undo three times', async ({ page }) => {
+  await start(page);
+  await withMamad(page);
+  const details = await wall(page, [3250, 3000]);
+  await details.getByRole('button', { name: e.fix }).click();
+  await mamadRow(page).getByRole('button', { name: e.confirm }).click();
+  await expect(mamadRow(page)).toHaveCount(0);
+  for (let i = 0; i < 3; i++) await page.keyboard.press('Control+z');
+  await expect(page.locator('[data-wall]').nth(4)).not.toHaveAttribute('fill', COLOR.mamad);
+  await expect(mamadRow(page)).toHaveCount(0);
+});
