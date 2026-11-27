@@ -133,6 +133,7 @@ export const existingHandlers: Handlers = {
     const { material: _, ...bare } = old;
     const built: Wall = a.material === undefined ? old : a.material === null ? bare : { ...bare, material: material(a.material) };
     if (a.a === undefined && a.b === undefined && a.thickness === undefined) {
+      if (a.material === undefined) return { project: p }; // nothing asked: nothing changes, not even the project object
       // what it is built of, not where: no lock, no recompute, nothing un-confirmed
       return { project: withState(p, { ...s, walls: s.walls.map(x => (x === old ? built : x)) }) };
     }

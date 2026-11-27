@@ -83,3 +83,13 @@ it('the file: a wall without material parses, with one round-trips, with an unkn
   bad.existing.walls[4].material = 'wood';
   expect(ProjectSchema.safeParse(bad).success).toBe(false);
 });
+
+it('an x.setWall that changes nothing is no undo step', () => {
+  const p = boxProject();
+  const r = apply(p, { type: 'x.setWall', id: 'part' });
+  expect(r.ok && r.project).toBe(p);
+  const store = createStore();
+  store.load(p);
+  store.dispatch({ type: 'x.setWall', id: 'part' });
+  expect(store.canUndo).toBe(false);
+});
