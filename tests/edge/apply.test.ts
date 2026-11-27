@@ -4,7 +4,7 @@ import { createHistory } from '../../src/model/history';
 import { computeRooms } from '../../src/model/rooms';
 import { envelopeKept, openingLock } from '../../src/model/rules';
 import { ProjectSchema } from '../../src/model/schema';
-import type { Action, Project, Pt } from '../../src/model/types';
+import type { WallMaterial, Action, Project, Pt } from '../../src/model/types';
 import { boxProject } from '../fixtures/box';
 
 const RUNS = Number(process.env.ETELIER_RUNS ?? 300);
@@ -52,6 +52,8 @@ function action(p: Project, r: () => number): Action {
         a: r() < 0.5 ? { x: e.x + whole(-300, 300), y: e.y + whole(-3, 3) } : undefined,
         b: r() < 0.3 ? P() : undefined,
         thickness: r() < 0.3 ? n(whole(20, 300)) : undefined,
+        // what it is built of, now and then, a bad value too (Task 11a)
+        material: r() < 0.2 ? pick(['gypsum', 'block', 'concrete', 'other', null, 'wood'] as unknown as WallMaterial[]) : undefined,
       };
     }
     case 5:
