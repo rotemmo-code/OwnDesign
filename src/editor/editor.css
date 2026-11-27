@@ -12,7 +12,8 @@ p { margin: 0; }
 main > p { padding: 4px 16px; }
 main > p:empty { padding: 0; }
 [role='alert'] { font-weight: 700; }
-button, .upload { font: inherit; line-height: 24px; color: var(--c-dimension); background: var(--c-paper); border: 1px solid var(--c-dimension); border-radius: 4px; padding: 3px 12px; cursor: pointer; }
+/* Every button one font size and one height (owner, round 13); a long label makes it wider, never taller. Primary and secondary differ by colour only. */
+button, .upload { font: inherit; font-size: 1rem; line-height: 24px; block-size: 32px; min-inline-size: 4.5rem; box-sizing: border-box; white-space: nowrap; color: var(--c-dimension); background: var(--c-paper); border: 1px solid var(--c-dimension); border-radius: 4px; padding: 3px 12px; cursor: pointer; }
 button[aria-pressed='true'], .upload { color: var(--c-paper); background: var(--c-dimension); }
 .upload { position: relative; }
 .upload input { position: absolute; inset: 0; inline-size: 100%; opacity: 0; cursor: pointer; }
@@ -43,7 +44,7 @@ button[aria-pressed='true'], .upload { color: var(--c-paper); background: var(--
 .panel [role='group'], .panel form { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
 .panel [role='group'] > span { inline-size: 100%; }
 .panel ol { margin: 0; padding-inline-start: 24px; }
-.panel li button { margin-inline-start: 8px; padding: 0 8px; }
+.panel li button { margin-inline-start: 8px; }
 .panel input { font: inherit; inline-size: 6em; border: 1px solid var(--c-ink); border-radius: 4px; padding: 2px 6px; }
 .panel .go { color: var(--c-paper); background: var(--c-dimension); }
 .warn, .bad strong, .unverified { font-weight: 700; }
@@ -55,3 +56,49 @@ button[aria-pressed='true'], .upload { color: var(--c-paper); background: var(--
 .halo .dim line, .halo .dim rect, .halo .snap { stroke: var(--c-paper); stroke-width: 4px; }
 .halo .dim text { fill: var(--c-paper); stroke: var(--c-paper); stroke-width: 3px; }
 .aim { stroke: var(--c-ink); }
+
+/*
+ * The editor (Task 11a). Its row of tools sits above the drawing, the one view control below it (owner R15); the plan keeps
+ * at least 280 px and the page scrolls when the window is shorter (owner R7). Under 700 px wide: one column, the panel under the plan.
+ */
+[data-testid='drawing']:not(:empty) { grid-template-rows: auto minmax(280px, 1fr) auto; }
+.view-row { grid-column: 1 / -1; grid-row: 1; display: flex; flex-wrap: wrap; gap: 4px 16px; align-items: center; padding: 4px 16px; box-shadow: 0 1px var(--c-ink); }
+.frame, .panel { grid-row: 2; }
+.tools { grid-row: 3; }
+.toolbar, [role='tablist'] { display: flex; flex-wrap: wrap; gap: 4px; }
+.strength input { vertical-align: middle; }
+[role='tab'][aria-selected='true'] { color: var(--c-paper); background: var(--c-dimension); }
+button:disabled { cursor: default; color: var(--c-ink); border-color: var(--c-ink); opacity: 0.5; }
+header input, .panel select { font: inherit; border: 1px solid var(--c-ink); border-radius: 4px; padding: 2px 6px; }
+header .project-name input { inline-size: 14em; }
+.panel label { display: block; }
+.panel select { inline-size: auto; }
+.editor-panel > * { margin-block-end: 8px; }
+.message:empty, .message:empty + * { margin-block-start: 0; }
+.message:not(:empty), .lock, .question { box-shadow: inset 4px 0 var(--c-ink); padding-inline-start: 12px; }
+.question button { margin: 4px; }
+.legend { position: sticky; inset-block-end: 0; background: var(--c-paper); box-shadow: 0 -1px var(--c-ink); padding-block: 8px; }
+.legend ul { list-style: none; margin: 0; padding: 0; }
+.legend li { display: flex; align-items: center; gap: 8px; }
+.selected { fill: none; stroke: var(--c-dimension); stroke-width: 3px; vector-effect: non-scaling-stroke; pointer-events: none; }
+.selected-room .selected { stroke-dasharray: 8 4; }
+.edge-length, .wall-preview text { fill: var(--c-dimension); text-anchor: middle; paint-order: stroke; stroke: var(--c-paper); pointer-events: none; }
+.wall-preview path { fill: var(--c-dimension); fill-opacity: 0.25; stroke: var(--c-dimension); stroke-width: 2px; stroke-dasharray: 6 3; vector-effect: non-scaling-stroke; pointer-events: none; }
+.wall-preview text { text-anchor: start; }
+.room-label text { text-anchor: middle; paint-order: stroke; stroke: var(--c-paper); pointer-events: none; }
+@media (max-width: 700px) {
+  main { block-size: auto; min-block-size: 100dvh; }
+  [data-testid='drawing'] { flex: none; }
+  [data-testid='drawing']:not(:empty) { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto auto auto; }
+  .frame { grid-row: 2; block-size: max(280px, 70dvh); }
+  .tools { grid-row: 3; }
+  .panel { grid-column: 1; grid-row: 4; overflow: visible; }
+  .legend { position: static; }
+}
+.frame canvas { opacity: var(--plan, 1); } /* the plan's strength; never set at 100 % */
+
+/* Owner R15: one view control after the drawing; the tools row before it, empty and hidden on the calibration screen. */
+.view-row:empty { display: none; }
+.zoom { font-weight: 700; min-inline-size: 3.5em; white-space: nowrap; }
+.hidden-label { position: absolute; inline-size: 1px; block-size: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+[data-testid='zoom-hint']:empty { display: none; }

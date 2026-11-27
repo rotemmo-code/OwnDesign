@@ -17,6 +17,12 @@ it('every wall, finish and dimension colour has contrast of at least 3 on paper;
   for (const name of ['ink', 'dimension'] as const) expect(contrast(COLOR[name], COLOR.paper), name).toBeGreaterThanOrEqual(4.5);
 });
 
+it('a fixed inner wall is told from an existing one and from paper by contrast of at least 3', () => {
+  expect(contrast(COLOR.fixed, COLOR.paper)).toBeGreaterThanOrEqual(3);
+  expect(contrast(COLOR.fixed, COLOR.existing)).toBeGreaterThanOrEqual(3);
+  expect(new Set(Object.values(COLOR)).size).toBe(Object.keys(COLOR).length);
+});
+
 it('the eight colours are all different, and added, moved and removed also differ in fill or dash', () => {
   expect(KINDS).toHaveLength(6);
   expect(new Set([...KINDS, 'finish', 'dimension'].map(name => COLOR[name as WallKind])).size).toBe(8);

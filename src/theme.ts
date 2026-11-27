@@ -7,6 +7,8 @@ export const COLOR = {
   exterior: '#1F4E79',
   mamad: '#7B2D8E',
   existing: '#5B6470',
+  /** An inner wall classed fixed (owner, round 12: told by colour, no mark): at least 3 : 1 against paper and against existing. */
+  fixed: '#0E1216',
   moved: '#B45000',
   added: '#1B7F46',
   removed: '#C62828',

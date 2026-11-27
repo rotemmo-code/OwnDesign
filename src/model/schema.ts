@@ -65,6 +65,7 @@ const wall = z
     finishEnd: finish.optional(),
     source: z.enum(['detected', 'manual']),
     review: z.boolean(),
+    material: z.enum(['gypsum', 'block', 'concrete', 'other']).optional(),
     status,
     from: z.strictObject({ a: pt, b: pt }).optional(),
   })
