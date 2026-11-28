@@ -196,3 +196,16 @@ scale; two silent ways to unlock the protected room; the axis hold moved a snapp
 60 mm; keyboard order). Tests: 623 unit, 43 edge, 354 browser. Not checked: real hands on real
 drawings, a real Hebrew keyboard, screen readers, Edge, Safari, drawings of 480 walls and more.
 Pages: [pdf-importer](pdf-importer.md).
+
+## [2026-11-28] feature | PDF importer: editor screen, part 2 (openings, separators, finishes)
+
+The editor now adds doors, windows and passages to a wall, separator lines between spaces, a split
+tool, moves of a wall end or an opening edge by two clicks (a drag always pans), and finish layers
+with net and gross areas. Windows, the entry door and openings on a protected-room wall are locked
+from the moment they exist: a change is refused with a note until a deliberate release. Review:
+three important findings fixed in one round (a locked outer wall could be lengthened along its own
+line with no release; a wall holding a window could not be lengthened by a click; every pointer
+move redrew all walls). A 500-wall draft keeps a preview frame under 50 ms in both browsers.
+Tests: 637 unit, 43 edge, 418 browser. Not checked: real hands on real drawings, diagonal walls
+with openings, Edge, Safari, screen readers, edits on drawings of 480 walls and more.
+Pages: [pdf-importer](pdf-importer.md).
