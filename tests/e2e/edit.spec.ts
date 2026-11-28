@@ -74,6 +74,22 @@ test('the second click on another wall is refused with a note; the first stays',
   await expect(opening(page)).toHaveCount(1);
 });
 
+test('the opening tool: a first click on no wall says what to do; a first click on a wall undo took away counts for nothing', async ({ page }) => {
+  await start(page);
+  await tool(page, e.wall);
+  await drawWall(page, FIVE[4]);
+  await tool(page, e.door);
+  await clickMm(page, [1700, 2200]);
+  await expect(message(page)).toHaveText(e.openingFirst);
+  await clickMm(page, [3250, 1200]);
+  await expect(step(page)).toHaveText(e.openingSecond);
+  await page.keyboard.press('Control+z');
+  expect(await wallBoxes(page)).toEqual([]);
+  await expect(step(page)).toHaveText(e.openingFirst);
+  await page.getByLabel(e.widthField).press('Enter');
+  await expect(opening(page)).toHaveCount(0);
+});
+
 test('a window and an entry door are locked as soon as they are drawn: a change is refused; תיקון, a new width, אישור', async ({ page }) => {
   await start(page);
   await drawFive(page);
@@ -117,20 +133,23 @@ test('a window and an entry door are locked as soon as they are drawn: a change 
   expect(await page.locator('body').innerText()).not.toContain('מוגן');
 });
 
-test('openings are painted by their lock: locked in their wall\'s colour, free in the existing colour; the legend names them', async ({ page }) => {
+test('openings are painted by their lock: locked in their outer wall\'s colour or, on an inner wall, the fixed colour; free in the existing colour; the legend names each', async ({ page }) => {
   await start(page);
   await oneRoom(page);
   await tool(page, e.wall);
   await drawWall(page, FIVE[4]);
   await page.getByRole('button', { name: e.part(1, '12.00') }).click();
-  await drawOpening(page, e.window, [1100, 100], [2300, 100]);
-  await drawOpening(page, e.door, [3250, 1200], [3250, 2000]);
-  const win = page.locator('[data-opening][data-kind="window"] path').first();
-  const door = page.locator('[data-opening][data-kind="door"] path').first();
-  await expect(win).toHaveAttribute('stroke', COLOR.exterior);
-  await expect(door).toHaveAttribute('stroke', COLOR.existing);
   const legend = page.getByRole('region', { name: e.legend });
+  await drawOpening(page, e.window, [1100, 100], [2300, 100]); // locked, on an outer wall
+  await expect(legend).not.toContainText(e.lockedInnerOpening);
+  await drawOpening(page, e.door, [3800, 100], [4600, 100]); // free, on an outer wall
+  await drawOpening(page, e.window, [3250, 2600], [3250, 3400]); // locked, on an inner wall (R32)
+  const windows = page.locator('[data-opening][data-kind="window"]'); // in the order drawn
+  await expect(page.locator('[data-opening][data-kind="door"] path').first()).toHaveAttribute('stroke', COLOR.existing);
+  await expect(windows.nth(0).locator('path').first()).toHaveAttribute('stroke', COLOR.exterior);
+  await expect(windows.nth(1).locator('path').first()).toHaveAttribute('stroke', COLOR.fixed);
   await expect(legend).toContainText(e.lockedOpening);
+  await expect(legend).toContainText(e.lockedInnerOpening);
   await expect(legend).toContainText(e.freeOpening);
 });
 
@@ -163,6 +182,33 @@ test('two doors in one mamad opening are accepted, a third is refused', async ({
   await drawOpening(page, e.door, [3250, 1200], [3250, 2000]);
   await expect(message(page)).toHaveText(copy.reason['invalid-geometry']!);
   await expect(opening(page)).toHaveCount(2);
+});
+
+test('an opening on a mamad wall: an attempt shows the one instruction that works; תיקון, a new width, אישור (R35)', async ({ page }) => {
+  await start(page);
+  await twoRooms(page);
+  const right = await pick(page, [4700, 2200], 'room-details');
+  await right.getByLabel(e.isMamad).check();
+  await drawOpening(page, e.door, [3250, 1200], [3250, 2000]);
+  await pick(page, [3250, 1600], 'opening-details');
+  await expect(lockOf(page)).toContainText(e.mamadOpeningLocked);
+  await widthField(page).fill('70');
+  await widthField(page).press('Enter');
+  await expect(message(page)).toHaveText(e.mamadOpeningLocked);
+  await expect(widthField(page)).toHaveValue('80');
+  await tool(page, e.remove);
+  await clickMm(page, [3250, 1600]);
+  await expect(message(page)).toHaveText(e.mamadOpeningLocked);
+  await expect(opening(page)).toHaveCount(1);
+  await pick(page, [3250, 1600], 'opening-details');
+  await lockOf(page).getByRole('button', { name: e.fix }).click();
+  await expect(lockOf(page)).toContainText(e.openingOpen);
+  await widthField(page).fill('70');
+  await widthField(page).press('Enter');
+  await expect(widthField(page)).toHaveValue('70');
+  await lockOf(page).getByRole('button', { name: e.confirm }).click();
+  await expect(lockOf(page)).toContainText(e.mamadOpeningLocked);
+  await expect((await pick(page, [4700, 2200], 'room-details')).getByLabel(e.isMamad)).toBeChecked(); // the mark stays
 });
 
 test('a separator from face to face splits a room; deleting it merges back; a click with no face near is refused', async ({ page }) => {
@@ -205,7 +251,9 @@ test('the split tool cuts a wall in two; both parts keep its class and its mater
   await w.getByRole('button', { name: e.classes.fixed }).click();
   await tool(page, e.splitTool);
   await clickMm(page, [2000, 100]);
-  expect(await wallBoxes(page)).toHaveLength(2);
+  const parts = (await wallBoxes(page)).sort((p, q) => p[0] - q[0]);
+  expect(parts).toHaveLength(2);
+  [[0, 0, 2000, 200], [2000, 0, 6400, 200]].forEach((want, i) => expectBox([parts[i]], want)); // cut where the click was
   for (const at of [[1000, 100], [4000, 100]] as [number, number][]) {
     const part = await pick(page, at, 'wall-details');
     await expect(part.getByRole('button', { name: e.classes.fixed })).toHaveAttribute('aria-pressed', 'true');
@@ -264,17 +312,82 @@ test('typing 250 moves the selected wall end to 250 cm; a bad length changes not
   expect(await wallBoxes(page)).toEqual([[3200, 200, 3300, 2700]]);
 });
 
-test('the end of a locked outer wall moves only along its own line', async ({ page }) => {
+test('typing a length on a wall beside rooms takes the longest room face: the end moves by the difference', async ({ page }) => {
+  await start(page);
+  await twoRooms(page);
+  const before = await wallBoxes(page);
+  await pick(page, [3000, 100], 'wall-details');
+  await clickMm(page, [6400, 100]); // its end b; the faces shown are 300 and 290 cm
+  await page.getByLabel(e.wallLength).fill('310');
+  await page.getByLabel(e.wallLength).press('Enter');
+  const after = await wallBoxes(page);
+  expect(Math.abs(after[0][2] - before[0][2] - 100)).toBeLessThan(0.5);
+  expect([after[0][0], after[0][1], after[0][3]]).toEqual([before[0][0], before[0][1], before[0][3]]);
+});
+
+test('a locked outer wall: its end is not moved by a click nor by a typed length, and the note says why; after תיקון it moves (R31)', async ({ page }) => {
   await start(page);
   await oneRoom(page);
-  await page.getByRole('button', { name: e.confirm }).click(); // the outer walls lock
   const before = await wallBoxes(page);
-  await pick(page, [6300, 3000], 'wall-details');
+  const right = () => pick(page, [6300, 3000], 'wall-details');
+  const fix = async () => (await right()).getByTestId('lock').getByRole('button', { name: e.fix }).click();
+  await page.getByRole('button', { name: e.confirm }).click(); // the outer walls lock
+  // a click on the end handle of the locked wall holds nothing
+  await right();
+  await expect(message(page)).toHaveText('');
   await clickMm(page, [6300, 4200]);
-  await clickMm(page, [6600, 4800]); // 30 cm off its line, 60 cm past its end
+  await expect(message(page)).toHaveText(copy.reason['envelope-locked']!);
+  await expect(message(page)).toHaveAttribute('aria-live', 'polite');
+  await expect(page.getByLabel(e.wallLength)).toHaveCount(0);
+  await clickMm(page, [6600, 4800]);
+  expect(await wallBoxes(page)).toEqual(before);
+  // an end held while the outer walls were open, then the outer walls confirmed: the typed length is refused
+  await fix();
+  await expect(message(page)).toHaveText('');
+  await clickMm(page, [6300, 4200]);
+  await expect(step(page)).toHaveText(e.moveEnd);
+  await page.getByRole('button', { name: e.confirm }).click();
+  await page.getByLabel(e.wallLength).fill('500');
+  await page.getByLabel(e.wallLength).press('Enter');
+  await expect(message(page)).toHaveText(copy.reason['envelope-locked']!);
+  expect(await wallBoxes(page)).toEqual(before);
+  // תיקון: it moves as any wall
+  await fix();
+  await clickMm(page, [6300, 4200]);
+  await expect(step(page)).toHaveText(e.moveEnd);
+  await clickMm(page, [6300, 4800]);
+  expect(Math.abs((await wallBoxes(page))[3][3] - 4800)).toBeLessThan(3);
+});
+
+test('a wall that holds a locked window: a click one pixel off its line moves the end along the line; the window stays', async ({ page }) => {
+  await start(page);
+  await oneRoom(page); // the outer walls stay open
+  await drawOpening(page, e.window, [1100, 100], [2300, 100]);
+  const win = page.locator('[data-opening] path').first();
+  const was = await win.getAttribute('d');
+  const before = await wallBoxes(page);
+  await pick(page, [3000, 100], 'wall-details');
+  await clickMm(page, [6400, 100]);
+  await expect(step(page)).toHaveText(e.moveEnd);
+  await clickMm(page, [6800, 100], [0, 1]);
+  await expect(message(page)).toHaveText('');
   const after = await wallBoxes(page);
-  expect([after[3][0], after[3][2]]).toEqual([before[3][0], before[3][2]]); // the same line
-  expect(Math.abs(after[3][3] - 4800)).toBeLessThan(3); // longer, to where the click was (to a screen pixel)
+  expect(Math.abs(after[0][2] - 6800)).toBeLessThan(3);
+  expect([after[0][1], after[0][3]]).toEqual([before[0][1], before[0][3]]);
+  await expect(win).toHaveAttribute('d', was!);
+});
+
+test('a free end moved one pixel off its axis stays on the axis, as in the wall tool (R33)', async ({ page }) => {
+  await start(page);
+  await tool(page, e.wall);
+  await drawWall(page, FIVE[4]);
+  await pick(page, [3250, 3000], 'wall-details');
+  await clickMm(page, [3250, 200]);
+  await expect(step(page)).toHaveText(e.moveEnd);
+  await clickMm(page, [3250, -600], [1, 0]); // above the drawing: nothing to snap to
+  const [box] = await wallBoxes(page);
+  expect([box[0], box[2]]).toEqual([3200, 3300]);
+  expect(Math.abs(box[1] + 600)).toBeLessThan(3);
 });
 
 test('a finish of 2 cm on one side changes only that side\'s room and shows קיר and אחרי גימור', async ({ page }) => {
@@ -306,17 +419,25 @@ test('exterior wall: finish inside accepted, outside field disabled with a reaso
   await expect(message(page)).toHaveText('');
 });
 
-test('a free wall end takes an end finish; a joined end is disabled with its reason', async ({ page }) => {
+test('a free wall end takes an end finish; a joined end and a free end outside the apartment are disabled, each with its reason', async ({ page }) => {
   await start(page);
-  await oneRoom(page);
-  await tool(page, e.wall);
+  await drawFive(page, [0, 1, 2, 3]); // the room is not yet ticked as the apartment's
   await page.getByLabel(e.thickness).fill('10');
   await clickMm(page, [100, 2000]); // from the middle of the left wall
   await clickMm(page, [1500, 2000]); // to a free end in the room
   const w = await pick(page, [800, 2000], 'wall-details');
   const start_ = w.locator('label', { hasText: e.finishStart });
+  const free = w.locator('label', { hasText: e.finishEnd });
+  await expect(free.locator('input')).toBeDisabled();
+  await expect(free).toContainText(e.endNoRoom);
+  await expect(start_).toContainText(e.endJoined);
+  const r = await pick(page, [2500, 3000], 'room-details');
+  await r.getByLabel(e.inApartment).check();
+  await pick(page, [800, 2000], 'wall-details');
   await expect(start_.locator('input')).toBeDisabled();
   await expect(start_).toContainText(e.endJoined);
+  await expect(free).not.toContainText(e.endNoRoom);
+  await expect(free).not.toContainText(e.endJoined);
   const end = w.getByLabel(e.finishEnd);
   await expect(end).toBeEnabled();
   await end.fill('1');
