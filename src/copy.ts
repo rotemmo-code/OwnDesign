@@ -224,6 +224,7 @@ export const copy = {
     // Task 11c: the check before approval, the suggestions, the contractor's colours
     detailsTab: 'פרטים',
     checkTab: 'בדיקה לפני אישור',
+    panelTabs: 'פרטים או בדיקה',
     progress: (n: number, m: number) => `אושרו ${n} מתוך ${m}`,
     steps: { rooms: 'חללי הדירה', mamad: 'הממ"ד', entry: 'דלת הכניסה', doors: 'דלתות ומעברים', windows: 'חלונות', envelope: 'קירות החוץ' },
     roomsHow: 'סמנו אילו חללים שייכים לדירה.',

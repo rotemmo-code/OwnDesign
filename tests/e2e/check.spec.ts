@@ -344,8 +344,8 @@ function draft(): Project {
   delete p.envelope; // as a draft arrives: locked and not confirmed
   return p;
 }
-async function mount(page: Page, project: Project, colours: { hex: string; uses: number }[] = []) {
-  await page.setViewportSize({ width: 1440, height: 900 });
+async function mount(page: Page, project: Project, colours: { hex: string; uses: number }[] = [], size = { width: 1440, height: 900 }) {
+  await page.setViewportSize(size);
   await serveProbe(page);
   await page.evaluate(async ([p, c]) => (await import(/* @vite-ignore */ '/probe.js' as string)).mount(p, c), [project, colours] as const);
   await expect(page.locator('[data-wall]')).toHaveCount(project.existing.walls.length);
@@ -433,3 +433,29 @@ test('a colour meaning with markup stays text; a colour that is not #rrggbb gets
   await expect(page.locator('.legend img, .legend b')).toHaveCount(0);
   expect(await page.evaluate(() => (window as unknown as { pwned?: number }).pwned)).toBeUndefined();
 });
+
+for (const size of [{ width: 1440, height: 900 }, { width: 375, height: 700 }])
+  test(`the legend shows in both tabs; at ${size.width} px with 12 contractor colours open it covers none of the list's buttons (S1)`, async ({ page }) => {
+    const hexes = Array.from({ length: 12 }, (_, i) => `#${(0x102030 + i * 0x0a0b0c).toString(16).padStart(6, '0')}`);
+    const project = { ...draft(), sourceColors: hexes.map(hex => ({ hex, label: '' })) };
+    await mount(page, project, hexes.map(hex => ({ hex, uses: 1 })), size);
+    const legend = page.getByRole('region', { name: e.legend });
+    await expect(legend).toBeVisible();
+    await openCheck(page);
+    await expect(legend).toBeVisible();
+    await legend.locator('summary').click();
+    await expect(legend.locator('details li')).toHaveCount(12);
+    if (size.width > 700) await expect(legend).toBeInViewport();
+    const buttons = page.getByRole('tabpanel').getByRole('button');
+    expect(await buttons.count()).toBeGreaterThan(10);
+    for (const b of await buttons.all()) {
+      await b.scrollIntoViewIfNeeded();
+      // the button itself is what a click at its middle meets: nothing lies over it
+      const free = await b.evaluate(el => {
+        const r = el.getBoundingClientRect();
+        const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+        return !!hit && (hit === el || el.contains(hit));
+      });
+      expect(free, (await b.textContent()) ?? '').toBe(true);
+    }
+  });

@@ -328,43 +328,47 @@ export function SidePanel(props: Props) {
   };
   return (
     <div className="editor-panel">
-      {/* always there, empty unless something is said: a live region that appears with its text is not always read */}
-      <p aria-live="polite" className="message" data-testid="message">{message}</p>
-      {question && <Asked key={`${question.type}-${question.room}`} c={c} question={question} onDone={onQuestionDone} />}
-      {c.project.envelope === 'released' && c.project.existing.rooms.some(isInside) && (
-        <p className="lock">
-          {e.envelopeOpen} <button type="button" onClick={() => c.run({ type: 'x.confirmEnvelope' })}>{e.confirm}</button>
-        </p>
-      )}
-      {/* while the mark is taken back: after "אישור", or an undo of the release, no room is left unmarked */}
-      {mamadWas && !c.project.existing.rooms.some(r => r.isMamad) && (
-        <p className="lock" data-testid="mamad-row">
-          {/* a mark the model cleared (its room merged) was no "תיקון": it is marked again by hand */}
-          {mamadWas.fix ? (
-            <>
-              {e.mamadOpen(mamadWas.name)} <button type="button" onClick={onConfirmMamad}>{e.confirm}</button>
-            </>
-          ) : (
-            e.mamadChanged
-          )}
-        </p>
-      )}
-      <div role="tablist" className="panel-tabs">
-        {TABS.map(([name, text]) => (
-          <button key={name} id={`tab-${name}`} type="button" role="tab" aria-selected={tab === name} aria-controls="tab-panel" tabIndex={tab === name ? 0 : -1} onClick={() => onTab(name)} onKeyDown={key}>
-            {text}
-          </button>
-        ))}
+      {/* the panel's text scrolls; the legend under it is always in view, in both tabs, and covers nothing (S1) */}
+      <div className="panel-body">
+        {/* always there, empty unless something is said: a live region that appears with its text is not always read */}
+        <p aria-live="polite" className="message" data-testid="message">{message}</p>
+        {question && <Asked key={`${question.type}-${question.room}`} c={c} question={question} onDone={onQuestionDone} />}
+        {c.project.envelope === 'released' && c.project.existing.rooms.some(isInside) && (
+          <p className="lock">
+            {e.envelopeOpen} <button type="button" onClick={() => c.run({ type: 'x.confirmEnvelope' })}>{e.confirm}</button>
+          </p>
+        )}
+        {/* while the mark is taken back: after "אישור", or an undo of the release, no room is left unmarked */}
+        {mamadWas && !c.project.existing.rooms.some(r => r.isMamad) && (
+          <p className="lock" data-testid="mamad-row">
+            {/* a mark the model cleared (its room merged) was no "תיקון": it is marked again by hand */}
+            {mamadWas.fix ? (
+              <>
+                {e.mamadOpen(mamadWas.name)} <button type="button" onClick={onConfirmMamad}>{e.confirm}</button>
+              </>
+            ) : (
+              e.mamadChanged
+            )}
+          </p>
+        )}
+        <div role="tablist" className="panel-tabs" aria-label={e.panelTabs}>
+          {TABS.map(([name, text]) => (
+            <button key={name} id={`tab-${name}`} type="button" role="tab" aria-selected={tab === name} aria-controls="tab-panel" tabIndex={tab === name ? 0 : -1} onClick={() => onTab(name)} onKeyDown={key}>
+              {text}
+            </button>
+          ))}
+        </div>
+        <div role="tabpanel" id="tab-panel" aria-labelledby={`tab-${tab}`}>
+          {tab === 'check' ? <CheckList c={c} onFix={props.onFix} onShow={props.onShow} /> : <Details {...props} />}
+        </div>
       </div>
-      <div role="tabpanel" id="tab-panel" aria-labelledby={`tab-${tab}`}>
-        {tab === 'check' ? <CheckList c={c} onFix={props.onFix} onShow={props.onShow} /> : <Details {...props} />}
-      </div>
+      <PanelLegend {...props} />
     </div>
   );
 }
 
-/** The details tab: the tool's panel, what is selected, the areas' switch and the legend with the suggestions. */
-function Details({ c, selected, onFix, tool, plaster, finished, net, onNet, colours, suggested }: Props) {
+/** The legend of every paint on the drawing; in the details tab with the suggestions too (R48). */
+function PanelLegend({ c, finished, colours, suggested, tab }: Props) {
   const s = c.project.existing;
   const paints = [...new Set(c.derived.paints.values())];
   const anyFinish = !!finished && finished.strips.size > 0;
@@ -382,6 +386,21 @@ function Details({ c, selected, onFix, tool, plaster, finished, net, onNet, colo
   ];
   const acceptAll = () => c.runAll([...suggested].map(wallId => ({ type: 'classify', wallId, cls: 'fixed' }) as const));
   return (
+    <Legend
+      paints={paints}
+      extras={extras}
+      lockedColours={(['exterior', 'mamad'] as const).filter(k => lockedKinds.has(k)).map(k => COLOR[k])}
+      suggest={tab === 'details' ? { n: suggested.size, onAccept: acceptAll } : undefined}
+      colours={colours}
+      onLabel={(hex, label) => c.run({ type: 'n.setColorLabel', hex, label }).ok}
+    />
+  );
+}
+
+/** The details tab: the tool's panel, what is selected, the areas' switch. */
+function Details({ c, selected, onFix, tool, plaster, finished, net, onNet, suggested }: Props) {
+  const anyFinish = !!finished && finished.strips.size > 0;
+  return (
     <>
       {tool}
       {selected?.kind === 'wall' && <WallDetails c={c} id={selected.id} onFix={onFix} suggested={suggested.has(selected.id)} />}
@@ -395,14 +414,6 @@ function Details({ c, selected, onFix, tool, plaster, finished, net, onNet, colo
           <button type="button" aria-pressed={!net} onClick={() => onNet(false)}>{e.grossButton}</button>
         </div>
       )}
-      <Legend
-        paints={paints}
-        extras={extras}
-        lockedColours={(['exterior', 'mamad'] as const).filter(k => lockedKinds.has(k)).map(k => COLOR[k])}
-        suggest={{ n: suggested.size, onAccept: acceptAll }}
-        colours={colours}
-        onLabel={(hex, label) => c.run({ type: 'n.setColorLabel', hex, label }).ok}
-      />
     </>
   );
 }
