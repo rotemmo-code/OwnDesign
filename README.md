@@ -23,8 +23,9 @@ Work in progress. Built and reviewed so far:
 | Project file (open, save, download) and autosave draft in the browser | `src/storage/` |
 | Editor screen, part 1: draw walls by their centre line with a typed thickness, wall material, rooms with name and area, paint and legend per wall kind and class, locks with a note and a deliberate release, undo and redo, one view-reset control | `src/editor/Editor.tsx`, `Tools.tsx`, `Overlay.tsx`, `SidePanel.tsx`, `Legend.tsx`, `useProject.ts` |
 | Editor screen, part 2: doors, windows and passages on a wall, separator lines between spaces, splitting a wall, moving a wall end or an opening edge by two clicks, finish layers (plaster or cladding) with net and gross areas; locked openings and locked wall ends refuse a change with a note | `src/editor/Tools.tsx`, `Overlay.tsx`, `SidePanel.tsx`, `Legend.tsx`, `snap.ts` |
+| Editor screen, part 3: the guided check before approval in six steps (apartment rooms, protected room, entry door, doors and passages, windows, outer walls) with show, confirm, release and delete per item and a progress line; suggestions to class walls as fixed, accepted one by one or all in one undo step; the contractor's colours with a typed meaning | `src/editor/CheckList.tsx`, `SidePanel.tsx`, `Legend.tsx`, `useProject.ts`, `view.ts` |
 
-Not built yet: the guided check before approval, the save buttons,
+Not built yet: the approval itself, the save buttons,
 wall detection, the planned state, PDF output.
 Scanned (image-only) PDFs are out of scope for this version.
 
