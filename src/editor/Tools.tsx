@@ -101,20 +101,30 @@ type Held = { kind: 'end'; wall: Id; end: 'a' | 'b' } | { kind: 'edge'; opening:
 /**
  * A click picks an opening, a wall, a separator, else the room under it. On the chosen wall its two ends, on the chosen
  * opening its two edges, are handles: a click on one holds it, the next click places it, one action (owner R25). The end
- * of a wall with a locked stretch moves along the wall's own line only. While an end is held, a typed length places it.
+ * of a wall locked by the outer walls or the mamad does not move (R31); the end of a wall that carries a locked opening
+ * moves along the wall's own line only (the model's openingsHold); a free end is held to an axis as in the wall tool
+ * (R33). While an end is held, a typed length places it.
  */
 export function useSelectTool(c: EditorCtx, fills: SnapIndex): EditTool {
   const [held, setHeld] = useState<Held>(null);
   const [near, setNear] = useState<Pt | null>(null);
   const [text, setText] = useState('');
   useEscape(() => setHeld(null));
+  // shortcut: guard in the editor, move into src/model/rules.ts in Task 12
+  const endLocked = (w: Wall): boolean => {
+    const lock = c.derived.locks.get(w.id);
+    if (lock) c.say(copy.reason[lock === 'envelope' ? 'envelope-locked' : 'mamad-locked'] ?? e.reasonOther);
+    return !!lock;
+  };
   // where the held end or edge would go for a pointer at at: snapped once per move
   const place = (at: Vec, r: number): Pt | null => {
     if (held?.kind === 'end') {
       const w = wallOf(c, held.wall);
       if (!w) return null;
-      const p = toMm(c.k, snapCentre(at, fills, r, c.k, endsOf(c, w.id)).at);
-      return c.derived.locks.has(w.id) ? alongWall(w, offsetOn(w, p)) : p;
+      const snap = snapCentre(at, fills, r, c.k, endsOf(c, w.id));
+      const holdsLock = c.project.existing.openings.some(o => o.wallId === w.id && c.derived.openingLocks.get(o.id));
+      if (holdsLock) return alongWall(w, offsetOn(w, toMm(c.k, snap.at)));
+      return toMm(c.k, secondEnd(toPt(c.k, w[held.end === 'a' ? 'b' : 'a']), snap));
     }
     if (held?.kind === 'edge') {
       const o = c.project.existing.openings.find(x => x.id === held.opening);
@@ -125,6 +135,8 @@ export function useSelectTool(c: EditorCtx, fills: SnapIndex): EditTool {
   };
   const moveEnd = (to: Pt) => {
     if (held?.kind !== 'end') return;
+    const w = wallOf(c, held.wall);
+    if (!w || endLocked(w)) return setHeld(null);
     if (c.run({ type: 'x.setWall', id: held.wall, [held.end]: to }).ok) setHeld(null);
   };
   const moveEdge = (to: Pt) => {
@@ -170,6 +182,8 @@ export function useSelectTool(c: EditorCtx, fills: SnapIndex): EditTool {
       if (held?.kind === 'edge' && to) return moveEdge(to);
       const hit = pickAt(toMm(c.k, at), c.project.existing, r * c.k, c.selected);
       if (hit?.kind === 'end' || hit?.kind === 'edge') {
+        const w = hit.kind === 'end' && wallOf(c, hit.wall);
+        if (w && endLocked(w)) return;
         setText('');
         return setHeld(hit);
       }
@@ -233,7 +247,7 @@ export function useOpeningTool(c: EditorCtx, fills: SnapIndex, kind: Opening['ki
   const typed = () => {
     const mm = parseCm(text, { min: 10, max: 1_000_000, decimals: 1 });
     if (mm === null) return c.say(e.badLength);
-    if (!first) return;
+    if (!first || !wall) return;
     // toward the pointer, else along the wall from a to b
     const sign = near !== null && near < first.t ? -1 : 1;
     add(first.t, first.t + sign * mm);
@@ -242,20 +256,21 @@ export function useOpeningTool(c: EditorCtx, fills: SnapIndex, kind: Opening['ki
   return {
     pick: (at, r) => {
       const under = wallAt(toMm(c.k, at), c.project.existing.walls, r * c.k);
-      if (!first) {
+      // a first click whose wall is gone (undone) counts for nothing
+      if (!first || !wall) {
         const w = under && wallOf(c, under);
-        if (w) setFirst({ wall: w.id, t: along(w, at, r) });
-        return;
+        if (!w) return c.say(e.openingFirst);
+        return setFirst({ wall: w.id, t: along(w, at, r) });
       }
       if (under && under !== first.wall) return c.say(e.otherWall);
-      if (wall) add(first.t, along(wall, at, r));
+      add(first.t, along(wall, at, r));
     },
     hover: (at, r) => setNear(at && wall ? along(wall, at, r) : null),
     preview: ptPerPx => first && wall && near !== null && <SpanPreview w={wall} from={Math.min(first.t, near)} till={Math.max(first.t, near)} k={c.k} ptPerPx={ptPerPx} />,
     panel: (
       <section aria-labelledby="opening-tool-title">
         <h2 id="opening-tool-title">{title}</h2>
-        <Step text={first ? e.openingSecond : e.openingFirst} />
+        <Step text={wall ? e.openingSecond : e.openingFirst} />
         <ZoomHint mmPerPx={mmPerPx} />
         <label>
           {e.widthField}{' '}

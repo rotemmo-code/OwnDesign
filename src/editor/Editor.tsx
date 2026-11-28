@@ -48,7 +48,9 @@ export function useEditor({ store, page, plaster, measure, ptPerPx }: { store: S
     const r = store.dispatch(a);
     if (r.ok) ran.current = r.project.existing;
     if (!r.ok) {
-      setMessage(copy.reason[r.reason] ?? e.reasonOther);
+      // an opening on a mamad wall opens by itself (its "תיקון"), not by releasing the mamad (owner R35)
+      const ofOpening = a.type === 'x.setOpening' || a.type === 'x.deleteOpening';
+      setMessage(ofOpening && r.reason === 'mamad-locked' ? e.mamadOpeningLocked : (copy.reason[r.reason] ?? e.reasonOther));
       return r;
     }
     const events = roomEvents(before.existing, r.project.existing, r.notice);
