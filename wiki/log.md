@@ -209,3 +209,21 @@ move redrew all walls). A 500-wall draft keeps a preview frame under 50 ms in bo
 Tests: 637 unit, 43 edge, 418 browser. Not checked: real hands on real drawings, diagonal walls
 with openings, Edge, Safari, screen readers, edits on drawings of 480 walls and more.
 Pages: [pdf-importer](pdf-importer.md).
+
+## [2026-11-28] feature | PDF importer: editor screen, part 3 (guided check before approval)
+
+The side panel has a second tab with a six-step check: apartment rooms, the protected room, the
+entry door, doors and passages, windows, outer walls. Each item can be shown, confirmed, released
+or deleted, always through the same locked paths as the details tab; a progress line counts what
+would block approval. Walls can be classed "fixed" from suggestions, one by one or all in one
+undo step, and the contractor's colours can be given a meaning. Review: four important findings
+fixed (the outer walls step showed one of four walls before locking all of them; accept-all could
+not be undone past 100 steps; suggestions doubled the time of an edit on a 500-wall draft; the
+progress line could never reach "all"). No way was found to change a locked item from the list
+without a release. After the merge the full run failed on two frame-time tests in Firefox, exactly
+at the 50 ms limit; alone they passed 20 of 20, so they now run after the rest of the suite with
+no other worker, the limit unchanged. Tests: 645 unit, 43 edge, 470 browser. Known limit: on a
+500-wall draft the page freezes for one to five seconds after an edit or when the check tab
+opens; a normal apartment of about 60 walls stays under 130 ms. Not checked: real hands on real
+drawings, screen readers, Edge, Safari.
+Pages: [pdf-importer](pdf-importer.md).

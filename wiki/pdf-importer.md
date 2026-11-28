@@ -36,8 +36,9 @@ measurements. Source: [`../pdf-importer/`](../pdf-importer/README.md).
 | Project file (open, save, download) and an autosave draft in IndexedDB; an old draft is never deleted without asking | `pdf-importer/src/storage/` |
 | Editor screen, part 1: walls drawn by their centre line with a typed thickness and a material, rooms with name and area, paint and legend per wall kind and class (no lock icons), locks with a note and a deliberate release, undo and redo, one view-reset control with the zoom percentage | `pdf-importer/src/editor/Editor.tsx`, `Tools.tsx`, `Overlay.tsx`, `SidePanel.tsx`, `Legend.tsx`, `useProject.ts` |
 | Editor screen, part 2: doors, windows and passages on a wall, separator lines between spaces, splitting a wall, moving a wall end or an opening edge by two clicks, finish layers (plaster or cladding) with net and gross areas; locked openings and locked wall ends refuse a change with a note | `pdf-importer/src/editor/Tools.tsx`, `Overlay.tsx`, `SidePanel.tsx`, `Legend.tsx`, `snap.ts` |
+| Editor screen, part 3: the guided check before approval in six steps (apartment rooms, protected room, entry door, doors and passages, windows, outer walls) with show, confirm, release and delete per item and a progress line; suggestions to class walls as fixed, accepted one by one or all in one undo step; the contractor's colours with a typed meaning | `pdf-importer/src/editor/CheckList.tsx`, `SidePanel.tsx`, `Legend.tsx`, `useProject.ts`, `view.ts` |
 
-Not built yet: the guided check before approval, the
+Not built yet: the approval itself, the
 save buttons, wall detection, the planned state, PDF output. Image-only (scanned) PDFs are out of scope.
 
 ## How it is developed
@@ -49,8 +50,8 @@ defects, for example a diagonal wall touching another only by a corner that left
 ## Tests
 
 `cd pdf-importer && npm ci && npm run verify`: typecheck, unit, edge, regression and browser tests
-(Chromium and Firefox), then `npm audit`. After the second part of the editor screen was merged: 637 unit, 43 edge and
-418 browser tests pass; the 20 regression tests need private sample drawings and skip without them.
+(Chromium and Firefox), then `npm audit`. After the third part of the editor screen was merged: 645 unit, 43 edge and
+470 browser tests pass; the 20 regression tests need private sample drawings and skip without them.
 
 ## Privacy
 
