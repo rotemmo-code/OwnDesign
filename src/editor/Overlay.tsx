@@ -3,8 +3,8 @@ import { copy } from '../copy';
 import { finishStrips, roomAfterFinish } from '../model/finish';
 import { corners, dist, rings } from '../model/geo';
 import { wallOutlines } from '../model/join';
-import { wallKind } from '../model/kind';
-import { formatCm, formatM2, type Metrics, roomMetrics } from '../model/measure';
+import { isInside, wallKind } from '../model/kind';
+import { formatCm, formatM2, type Metrics, roomMetrics, roomsOnSide } from '../model/measure';
 import { envelopeLeaf, envelopeSpans, mamadSpan, openingLock } from '../model/rules';
 import type { Id, Opening, Project, Pt, Reason, Room, State, Wall, WallClass } from '../model/types';
 import { COLOR, type WallKind } from '../theme';
@@ -56,10 +56,16 @@ export type Stretch = { wall: Id; ring: Pt[] };
  * wall with its corner joints (the mamad's outer walls too), and a facade leaf whole.
  */
 export function outerStretches(s: State): Stretch[] {
+  // only a wall with an indoor room of the apartment or a balcony beside it has an outer stretch; a leaf lies against one
+  if (!s.rooms.some(r => isInside(r) || r.outdoor)) return [];
+  const rooms = new Map(s.rooms.map(r => [r.id, r]));
+  const outside = (w: Wall) => (['A', 'B'] as const).some(side => roomsOnSide(s, w.id, side).some(id => isInside(rooms.get(id)!) || rooms.get(id)!.outdoor));
+  const spans = new Map(s.walls.filter(outside).map(w => [w.id, envelopeSpans(s, w.id)]));
+  if (![...spans.values()].some(list => list.length)) return []; // no outer stretch: no leaf either
   return s.walls.flatMap(w => {
     const l = dist(w.a, w.b);
-    const spans = envelopeSpans(s, w.id);
-    if (spans.length) return spans.map(k => ({ wall: w.id, ring: corners(alongWall(w, Math.max(0, k.from - k.before)), alongWall(w, Math.min(l, k.to + k.after)), w.thickness) }));
+    const list = spans.get(w.id) ?? [];
+    if (list.length) return list.map(k => ({ wall: w.id, ring: corners(alongWall(w, Math.max(0, k.from - k.before)), alongWall(w, Math.min(l, k.to + k.after)), w.thickness) }));
     return l && envelopeLeaf(s, w) ? [{ wall: w.id, ring: corners(w.a, w.b, w.thickness) }] : [];
   });
 }

@@ -228,6 +228,9 @@ export const copy = {
     progress: (n: number, m: number) => `אושרו ${n} מתוך ${m}`,
     steps: { rooms: 'חללי הדירה', mamad: 'הממ"ד', entry: 'דלת הכניסה', doors: 'דלתות ומעברים', windows: 'חלונות', envelope: 'קירות החוץ' },
     roomsHow: 'סמנו אילו חללים שייכים לדירה.',
+    /** M4: the steps with nothing to check yet say how to go on. */
+    noRooms: 'עדיין אין חללים. ציירו את הקירות בכלי "הוסף קיר": כל חלל שהקירות סוגרים יופיע כאן.',
+    noOuter: 'עדיין אין קירות חוץ. סמנו בשלב "חללי הדירה" אילו חללים שייכים לדירה: הקירות שבגבולם הם קירות החוץ.',
     mamadQuestion: 'איזה חלל הוא הממ"ד, או שאין',
     noMamad: 'אין ממ"ד',
     mamadIs: (name: string) => `הממ"ד: ${name}`,

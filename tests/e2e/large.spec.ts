@@ -169,4 +169,17 @@ test('500 walls: the suggestions run after an edit has painted, never inside it 
   const ran = (await calls())[before];
   console.log(`500 walls: a class edit took ${(painted - start).toFixed(0)} ms; the suggestions ran ${(ran - painted).toFixed(0)} ms after it`);
   expect(ran).toBeGreaterThan(painted);
+  // for the report: with the whole grid as the apartment, the check tab and then its outer stretches (asked for after paint)
+  await page.evaluate(() => new Promise(r => setTimeout(r, 50))); // the page is free again: the suggestions are done
+  const { t0, shown } = await page.evaluate(async name => {
+    const tab = [...document.querySelectorAll<HTMLButtonElement>('[role="tab"]')].find(b => b.textContent === name)!;
+    const t0 = performance.now();
+    tab.click();
+    while (!document.querySelector('[data-testid="progress"]')) await new Promise(r => requestAnimationFrame(r));
+    await new Promise(r => requestAnimationFrame(r));
+    return { t0, shown: performance.now() };
+  }, e.checkTab);
+  await expect(page.locator('[data-highlight]').first()).toBeAttached({ timeout: 120_000 });
+  const lit = await page.evaluate(() => performance.now());
+  console.log(`500 walls as the apartment: the check tab showed in ${(shown - t0).toFixed(0)} ms, its outer stretches ${(lit - t0).toFixed(0)} ms after the click`);
 });

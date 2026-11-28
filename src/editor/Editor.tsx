@@ -13,6 +13,21 @@ import { roomEvents, type Store } from './useProject';
 
 const e = copy.editor;
 
+/** value once the frame that shows it is painted (a timer started in the next animation frame runs after it), while active. */
+function useAfterPaint<T>(value: T | null, active: boolean): T | null {
+  const [ready, setReady] = useState<T | null>(null);
+  useEffect(() => {
+    if (!active || value === null) return void setReady(null);
+    let timer = 0;
+    const frame = requestAnimationFrame(() => (timer = window.setTimeout(() => setReady(() => value))));
+    return () => {
+      cancelAnimationFrame(frame);
+      clearTimeout(timer);
+    };
+  }, [value, active]);
+  return ready;
+}
+
 /**
  * The editor of the existing state, as a tool of the page's one Canvas: its marks, its row of tools and its panel.
  * null until there is a project. It opens on the measure tool, which shows what the calibration found.
@@ -34,21 +49,12 @@ export function useEditor({ store, page, plaster, measure, ptPerPx }: { store: S
   // the finishes' strips and the areas after them are the costly part: they follow a moment after an edit
   const later = useDeferredValue(project);
   const finished = useMemo(() => later && deriveFinish(later.existing), [later?.existing]);
-  // The suggestions only while the details tab shows them, and never inside an edit (R48): asked for after the frame
-  // that shows the edit (a timer started in the next animation frame runs once that frame is painted).
-  const [ask, setAsk] = useState<Project | null>(null);
-  useEffect(() => {
-    if (tab !== 'details' || !project) return void setAsk(null);
-    let timer = 0;
-    const frame = requestAnimationFrame(() => (timer = window.setTimeout(() => setAsk(project))));
-    return () => {
-      cancelAnimationFrame(frame);
-      clearTimeout(timer);
-    };
-  }, [project?.existing, project?.wallClass, tab]);
-  // what the outer walls' "אישור" locks, while the check tab shows it (R50)
-  const stretches = useMemo(() => (project && tab === 'check' ? outerStretches(project.existing) : null), [project?.existing, tab]);
-  const suggestions = useMemo(() => (ask ? suggestedFixed(ask) : []), [ask?.existing, ask?.wallClass]);
+  // The suggestions only while the details tab shows them, and what the outer walls' "אישור" locks only while the check
+  // tab does: both asked for after the frame that shows an edit, never inside it (R48, R50)
+  const askSuggest = useAfterPaint(project, tab === 'details');
+  const askOuter = useAfterPaint(project?.existing ?? null, tab === 'check');
+  const stretches = useMemo(() => (askOuter ? outerStretches(askOuter) : null), [askOuter]);
+  const suggestions = useMemo(() => (askSuggest ? suggestedFixed(askSuggest) : []), [askSuggest?.existing, askSuggest?.wallClass]);
   const [net, setNet] = useState(true);
   // The drawing as the editor's own last action left it. When the drawing changes otherwise (undo, redo, a rescale, a load) its
   // message and a question about rooms no longer there go; a rename or a plaster answer leaves the drawing and the message alone.
@@ -182,7 +188,7 @@ export function useEditor({ store, page, plaster, measure, ptPerPx }: { store: S
         }}
         colours={colours}
         suggested={suggested}
-        stretches={stretches ?? []}
+        stretches={stretches}
       />
     ),
   };

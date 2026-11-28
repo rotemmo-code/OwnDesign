@@ -15,8 +15,8 @@ type Props = {
   onFix(lock: Lock): void;
   /** Select the item and fit the view to its box, in view points. */
   onShow(sel: Selected, box: Box): void;
-  /** What the outer walls' "אישור" locks (R50). */
-  stretches: Stretch[];
+  /** What the outer walls' "אישור" locks (R50); null while it is worked out, a moment after the tab opens. */
+  stretches: Stretch[] | null;
 };
 
 /** The box of some points in mm, in view points. */
@@ -97,7 +97,7 @@ function List({ c, onFix, onShow, stretches }: Props) {
       {step(
         'rooms',
         <>
-          <p>{e.roomsHow}</p>
+          <p>{s.rooms.length ? e.roomsHow : e.noRooms}</p>
           <ul>
             {s.rooms.map(r => (
               <li key={r.id} data-item={r.id}>
@@ -139,7 +139,8 @@ function List({ c, onFix, onShow, stretches }: Props) {
         'envelope',
         <>
           <p>{e.outerHow}</p>
-          {stretches.length > 0 && (
+          {stretches?.length === 0 && <p>{e.noOuter}</p>}
+          {!!stretches?.length && (
             <ul>
               <li data-item="envelope">
                 {e.allOuter} <span data-testid="status">{p.envelope === 'confirmed' ? e.confirmed : e.notConfirmed}</span>

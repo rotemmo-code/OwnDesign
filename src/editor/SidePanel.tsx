@@ -306,8 +306,8 @@ type Props = {
   colours: ContractorColour[];
   /** The walls suggested as fixed, computed a moment after an edit and only for the details tab (R48). */
   suggested: Set<Id>;
-  /** What the outer walls' "אישור" locks, while the check tab is open. */
-  stretches: Stretch[];
+  /** What the outer walls' "אישור" locks, while the check tab is open; null until known. */
+  stretches: Stretch[] | null;
 };
 
 const TABS: [Tab, string][] = [
@@ -383,7 +383,7 @@ function PanelLegend({ c, finished, colours, suggested, tab, stretches }: Props)
     ...(['opening-locked', 'opening-locked-inner', 'opening-free'] as const).filter(x => openingPaints.has(x)),
     ...(s.openings.some(o => o.released || !o.confirmed) ? (['unconfirmed'] as const) : []),
     ...(s.openings.some(o => o.review) || s.walls.some(w => w.review) ? (['review'] as const) : []),
-    ...(tab === 'check' && stretches.length ? (['outer'] as const) : []),
+    ...(tab === 'check' && stretches?.length ? (['outer'] as const) : []),
     ...(s.separators.length ? (['separator'] as const) : []),
     ...(anyFinish ? (['finish'] as const) : []),
   ];

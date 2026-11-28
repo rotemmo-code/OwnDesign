@@ -223,10 +223,15 @@ test('מחיקה in the list deletes an inner door; a locked window asks for ת�
   await expect(button(items(page, 'doors').first(), e.fix)).toHaveCount(1);
 });
 
-test('a step with nothing drawn says so, and the entry door\'s says how to draw it', async ({ page }) => {
+test('a step with nothing drawn says so; the entry door\'s, the rooms\' and the outer walls\' say how to go on (M4)', async ({ page }) => {
   await start(page);
-  await drawFive(page, [0, 1, 2, 3]);
   await openCheck(page);
+  await expect(step(page, 'rooms')).toContainText(e.noRooms);
+  await expect(step(page, 'envelope')).toContainText(e.noOuter);
+  await tab(page, e.detailsTab).click();
+  await drawFive(page, [0, 1, 2, 3]); // a room, not yet the apartment's: no outer wall yet
+  await openCheck(page);
+  await expect(step(page, 'envelope')).toContainText(e.noOuter);
   await expect(step(page, 'entry')).toContainText(e.noEntry);
   await expect(step(page, 'doors')).toContainText(e.noDoors);
   await expect(step(page, 'windows')).toContainText(e.noWindows);
