@@ -12,6 +12,11 @@ export type Store = {
   project: Project | null;
   /** The only caller of apply. A refused action changes nothing. */
   dispatch(a: Action): Result;
+  /**
+   * Several actions as one step of the history (one undo, one redo), each applied to the result of the one before; a
+   * refusal of any changes nothing. Its notice: the last one given. An empty list is refused.
+   */
+  dispatchAll(actions: Action[]): Result;
   undo(): void;
   redo(): void;
   canUndo: boolean;
@@ -19,16 +24,26 @@ export type Store = {
   /** The project is not the last one saved or loaded. */
   dirty: boolean;
   /**
-   * The mamad whose mark was taken back to correct it, read from the history: none is marked now, and the entry before this run
-   * of unmarked ones had one. null before any mark, while one is marked, and after a load (history starts afresh).
+   * The mamad whose mark was taken back, read from the history: none is marked now and the question is open, and the entry
+   * before this run of unmarked ones had one. fix: by its "תיקון"; else the model cleared it (its room merged). null before
+   * any mark, while one is marked, once answered (a room or אין ממ"ד, R39), and after a load (history starts afresh).
    */
-  released: { id: Id; name: string } | null;
+  released: Released;
   /** Task 12: the project that was written; an edit made while it was written stays dirty. */
   markSaved(saved: Project): void;
   /** The file schema first, then the rooms computed again from the walls; history starts afresh. null: loaded. */
   load(p: Project): Reason | null;
   clear(): void;
 };
+
+export type Released = { id: Id; name: string; fix: boolean } | null;
+/** What the release row reads after an accepted action, from the entry before it and what that one read (prev). */
+export function releasedAfter(before: Project, after: Project, a: Action, prev: Released): Released {
+  const marked = (p: Project) => p.existing.rooms.find(r => r.isMamad);
+  if (marked(after) || after.mamad !== null) return null;
+  const was = marked(before);
+  return was ? { id: was.id, name: was.name, fix: a.type === 'setMamad' && a.room === null } : prev;
+}
 
 export type ProjectStore = Store & { subscribe(fn: () => void): () => void; getSnapshot(): Store };
 
@@ -38,22 +53,33 @@ export function createStore(): ProjectStore {
   let saved: Project | null = null;
   const listeners = new Set<() => void>();
   // per project of the history: kept with the object itself, so that undo and redo find it again
-  const releasedOf = new WeakMap<Project, Store['released']>();
-  const mamadOf = (p: Project) => p.existing.rooms.find(r => r.isMamad);
-  const follow = (before: Project, after: Project) => {
-    const was = mamadOf(before);
-    releasedOf.set(after, mamadOf(after) ? null : was ? { id: was.id, name: was.name } : (releasedOf.get(before) ?? null));
-  };
+  const releasedOf = new WeakMap<Project, Released>();
   const methods = {
     dispatch(a: Action): Result {
       if (!snapshot.project) return { ok: false, reason: 'invalid-action' };
       const r = apply(snapshot.project, a);
       if (r.ok && r.project !== snapshot.project) {
-        follow(snapshot.project, r.project);
+        releasedOf.set(r.project, releasedAfter(snapshot.project, r.project, a, releasedOf.get(snapshot.project) ?? null));
         history.push(r.project);
         set(r.project);
       }
       return r;
+    },
+    dispatchAll(actions: Action[]): Result {
+      const start = snapshot.project;
+      if (!start || !actions.length) return { ok: false, reason: 'invalid-action' };
+      let [p, released, notice] = [start, releasedOf.get(start) ?? null, undefined as Notice | undefined];
+      for (const a of actions) {
+        const r = apply(p, a);
+        if (!r.ok) return r;
+        [released, notice] = [releasedAfter(p, r.project, a, released), r.notice ?? notice];
+        p = r.project;
+      }
+      if (p === start) return { ok: true, project: p };
+      releasedOf.set(p, released);
+      history.push(p);
+      set(p);
+      return notice === undefined ? { ok: true, project: p } : { ok: true, project: p, notice };
     },
     undo() {
       const p = history.undo();

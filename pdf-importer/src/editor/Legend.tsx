@@ -1,5 +1,6 @@
 import { useId, useMemo } from 'react';
 import { copy } from '../copy';
+import { CommitField } from './CommitField';
 import type { WallClass } from '../model/types';
 import { COLOR, KIND_STYLE, type WallKind } from '../theme';
 
@@ -55,21 +56,42 @@ export const paintText = (name: PaintName): string =>
 
 const ORDER: PaintName[] = ['exterior', 'mamad', 'fixed', 'existing', 'unknown', 'moved', 'added', 'removed'];
 /** The other things on the drawing that have a paint of their own (R22). */
-export type Extra = 'opening-locked' | 'opening-locked-inner' | 'opening-free' | 'unconfirmed' | 'separator' | 'finish';
-const EXTRAS: Extra[] = ['opening-locked', 'opening-locked-inner', 'opening-free', 'unconfirmed', 'separator', 'finish'];
+export type Extra = 'opening-locked' | 'opening-locked-inner' | 'opening-free' | 'unconfirmed' | 'review' | 'outer' | 'separator' | 'finish';
+const EXTRAS: Extra[] = ['opening-locked', 'opening-locked-inner', 'opening-free', 'unconfirmed', 'review', 'outer', 'separator', 'finish'];
 const ARC = 'M3 13H13A10 10 0 0 0 3 3Z';
 
-function ExtraSwatch({ extra, ids }: { extra: Extra; ids: PaintIds }) {
+/** lockedColours: the colours of the walls that hold a locked opening (outer, mamad), one arc each (R46). */
+function ExtraSwatch({ extra, ids, lockedColours }: { extra: Extra; ids: PaintIds; lockedColours: string[] }) {
   if (extra === 'separator') return <line x1="2" y1="8" x2="30" y2="8" stroke={COLOR.ink} strokeWidth="1" />;
   if (extra === 'finish') return <rect x="1" y="2" width="30" height="12" strokeWidth="1.5" {...finishPaint(ids)} />;
-  const stroke = { 'opening-locked': COLOR.exterior, 'opening-locked-inner': COLOR.fixed, 'opening-free': COLOR.existing, unconfirmed: COLOR.ink }[extra];
+  if (extra === 'outer') return <rect x="3" y="4" width="26" height="8" className="highlight" />;
+  if (extra === 'review') return <rect x="1" y="2" width="30" height="12" fill="none" stroke={COLOR.ink} strokeWidth="1.5" strokeDasharray="3 2" />;
+  if (extra === 'opening-locked') return <>{lockedColours.map((stroke, i) => <path key={stroke} d={ARC} transform={`translate(${i * 16} 0)`} fill="none" stroke={stroke} strokeWidth="1.5" />)}</>;
+  const stroke = { 'opening-locked-inner': COLOR.fixed, 'opening-free': COLOR.existing, unconfirmed: COLOR.ink }[extra];
   return <path d={ARC} fill="none" stroke={stroke} strokeWidth="1.5" strokeDasharray={extra === 'unconfirmed' ? '3 2' : undefined} />;
 }
 const extraText = (extra: Extra) =>
-  ({ 'opening-locked': copy.editor.lockedOpening, 'opening-locked-inner': copy.editor.lockedInnerOpening, 'opening-free': copy.editor.freeOpening, unconfirmed: copy.editor.unconfirmed, separator: copy.editor.separatorLegend, finish: copy.editor.finishLegend })[extra];
+  ({ 'opening-locked': copy.editor.lockedOpening, 'opening-locked-inner': copy.editor.lockedInnerOpening, 'opening-free': copy.editor.freeOpening, unconfirmed: copy.editor.unconfirmed, review: copy.editor.review, outer: copy.editor.outerLegend, separator: copy.editor.separatorLegend, finish: copy.editor.finishLegend })[extra];
 
-/** Every paint on the drawing, each with a swatch drawn with the same paint and its words. */
-export function Legend({ paints, extras = [] }: { paints: PaintName[]; extras?: Extra[] }) {
+/** A colour of the contractor's drawing. label: what she says it means; absent for one that cannot be labelled. */
+export type ContractorColour = { hex: string; label?: string };
+const HEX = /^#[0-9a-f]{6}$/;
+
+type LegendProps = {
+  paints: PaintName[];
+  extras?: Extra[];
+  lockedColours?: string[];
+  /** The walls suggested as fixed, with the one action that accepts them all (in the class area). */
+  suggest?: { n: number; onAccept(): void };
+  colours?: ContractorColour[];
+  onLabel?(hex: string, label: string): boolean;
+};
+
+/**
+ * Every paint on the drawing, each with a swatch drawn with the same paint and its words; the suggestions; the
+ * contractor's colours, a swatch only for #rrggbb (any other text is never a colour on the page).
+ */
+export function Legend({ paints, extras = [], lockedColours = [COLOR.exterior], suggest, colours = [], onLabel }: LegendProps) {
   const ids = usePaintIds();
   const shown = ORDER.filter(name => paints.includes(name));
   return (
@@ -91,12 +113,41 @@ export function Legend({ paints, extras = [] }: { paints: PaintName[]; extras?: 
         {EXTRAS.filter(x => extras.includes(x)).map(extra => (
           <li key={extra} data-paint={extra}>
             <svg width="32" height="16" aria-hidden="true">
-              <ExtraSwatch extra={extra} ids={ids} />
+              <ExtraSwatch extra={extra} ids={ids} lockedColours={lockedColours} />
             </svg>
             <span>{extraText(extra)}</span>
           </li>
         ))}
       </ul>
+      {suggest && suggest.n > 0 && (
+        <p data-testid="suggestions">
+          {copy.editor.suggestWhy}{' '}
+          <button type="button" onClick={suggest.onAccept}>{copy.editor.acceptAll(suggest.n)}</button>
+        </p>
+      )}
+      {colours.length > 0 && (
+        <details>
+          <summary>{copy.editor.colours}</summary>
+          <ul>
+            {colours.map(({ hex, label }) => (
+              <li key={hex}>
+                {HEX.test(hex) && (
+                  <svg width="32" height="16" aria-hidden="true">
+                    <rect x="1" y="2" width="30" height="12" fill={hex} stroke={COLOR.ink} strokeWidth="1" />
+                  </svg>
+                )}
+                {HEX.test(hex) && label !== undefined && onLabel ? (
+                  <label>
+                    {copy.editor.colourMeans(hex)} <CommitField value={label} maxLength={200} placeholder={copy.editor.colourExample} onCommit={text => onLabel(hex, text)} />
+                  </label>
+                ) : (
+                  <bdi dir="ltr">{hex}</bdi>
+                )}
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
     </section>
   );
 }
