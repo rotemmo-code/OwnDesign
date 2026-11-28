@@ -2,9 +2,10 @@ import { type ReactNode, useDeferredValue, useEffect, useMemo, useRef, useState 
 import { copy } from '../copy';
 import type { Action, Id, Plaster, Result } from '../model/types';
 import type { ExtractedPage } from '../pdf/extract';
+import type { Box } from '../pdf/render';
 import type { Tool } from './Canvas';
 import { derive, deriveFinish, type Lock, Overlay } from './Overlay';
-import { type Question, SidePanel } from './SidePanel';
+import { type Question, SidePanel, type Tab } from './SidePanel';
 import { snapIndex } from './snap';
 import { type EditorCtx, type EditTool, type Selected, Toolbar, type ToolName, useDeleteTool, useOpeningTool, useSelectTool, useSeparatorTool, useSplitTool, useWallTool } from './Tools';
 import { roomEvents, type Store } from './useProject';
@@ -23,6 +24,9 @@ export function useEditor({ store, page, plaster, measure, ptPerPx }: { store: S
   const [message, setMessage] = useState('');
   const [question, setQuestion] = useState<Question | null>(null);
   const [strength, setStrength] = useState(100);
+  const [tab, setTab] = useState<Tab>('details');
+  // a new turn fits the view to an item shown from the check list (R42)
+  const [focus, setFocus] = useState<{ box: Box; turn: number } | null>(null);
   const project = store.project;
   const k = project?.calibration.mmPerPt ?? 1;
   const derived = useMemo(() => project && derive(project), [project?.existing, project?.envelope, project?.wallClass]);
@@ -99,6 +103,9 @@ export function useEditor({ store, page, plaster, measure, ptPerPx }: { store: S
     if (!project.existing.rooms.some(r => r.id === released.id)) return setMessage(e.mamadChanged);
     run({ type: 'setMamad', room: released.id });
   };
+  // the contractor's colours: those the project can label, then any other the page has (never labelled, no swatch unless #rrggbb)
+  const labelled = project.sourceColors;
+  const colours = [...labelled, ...page.colours.filter(x => !labelled.some(y => y.hex === x.hex)).map(x => ({ hex: x.hex }))];
   const marks = (ptPerPx: number): ReactNode => (
     <Overlay
       project={project}
@@ -111,6 +118,7 @@ export function useEditor({ store, page, plaster, measure, ptPerPx }: { store: S
       preview={active.preview?.(ptPerPx)}
       marks={tool === 'measure' ? measure.marks(ptPerPx) : active.marks?.(ptPerPx)}
       parts={question?.type === 'split' ? question.parts : []}
+      highlight={tab === 'check'}
     />
   );
   return {
@@ -118,6 +126,7 @@ export function useEditor({ store, page, plaster, measure, ptPerPx }: { store: S
     hover: active.hover,
     marks,
     strength,
+    focus,
     head: (
       <Toolbar
         tool={tool}
@@ -145,6 +154,13 @@ export function useEditor({ store, page, plaster, measure, ptPerPx }: { store: S
         finished={finished ?? null}
         net={net}
         onNet={setNet}
+        tab={tab}
+        onTab={setTab}
+        onShow={(sel, box) => {
+          setSelected(sel);
+          setFocus(f => ({ box, turn: (f?.turn ?? 0) + 1 }));
+        }}
+        colours={colours}
       />
     ),
   };

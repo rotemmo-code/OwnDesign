@@ -78,7 +78,7 @@ const Walls = memo(function Walls({ state, derived, ids }: { state: State; deriv
 /**
  * An opening: a white gap across its wall, with a door's arc, a window's line, or nothing for a passage; the entry door's
  * arc is heavier. Locked: the colour of its wall's kind, on an inner wall the fixed colour (R32); free: the existing
- * colour; released or not confirmed: dashed (R22).
+ * colour; released, not confirmed or for review: dashed (R22, R36).
  */
 function OpeningShape({ o, w, derived }: { o: Opening; w: Wall; derived: Derived }) {
   const [p, q] = [alongWall(w, o.offset), alongWall(w, o.offset + o.width)];
@@ -86,7 +86,7 @@ function OpeningShape({ o, w, derived }: { o: Opening; w: Wall; derived: Derived
   const locked = !!derived.openingLocks.get(o.id);
   const kind = derived.kinds.get(w.id) ?? 'existing';
   const colour = !locked ? COLOR.existing : kind === 'existing' ? COLOR.fixed : COLOR[kind];
-  const dashed = o.released || !o.confirmed ? '5 4' : undefined;
+  const dashed = o.released || !o.confirmed || o.review ? '5 4' : undefined;
   const line = { stroke: colour, strokeDasharray: dashed, vectorEffect: 'non-scaling-stroke' as const, fill: 'none' };
   return (
     <g data-opening={o.id} data-kind={o.kind} data-locked={locked} data-dashed={!!dashed} className="opening">
@@ -116,10 +116,12 @@ type Props = {
   marks?: ReactNode;
   /** Parts of a split room, numbered for the question which keeps the name. */
   parts?: Id[];
+  /** The outer walls stand out (the check list's step, R40). */
+  highlight?: boolean;
 };
 
 /** The draft over the page, in mm. Room names and areas come last: nothing is drawn over them (owner R9). */
-export function Overlay({ project, derived, finished, net, k, ptPerPx, selected, preview, marks, parts = [] }: Props) {
+export function Overlay({ project, derived, finished, net, k, ptPerPx, selected, preview, marks, parts = [], highlight = false }: Props) {
   const s = project.existing;
   const ids = usePaintIds();
   const px = ptPerPx * k; // mm per CSS pixel
@@ -146,6 +148,9 @@ export function Overlay({ project, derived, finished, net, k, ptPerPx, selected,
       <g transform={`scale(${1 / k})`}>
         <PaintDefs ids={ids} size={20} />
         <Walls state={s} derived={derived} ids={ids} />
+        {/* a wall the detector doubts: dashed around, no mark (R36) */}
+        {s.walls.map(w => w.review && <path key={w.id} className="review" data-review={w.id} d={pathOf(derived.outlines.get(w.id) ?? [])} />)}
+        {highlight && s.walls.map(w => derived.kinds.get(w.id) === 'exterior' && <path key={w.id} className="highlight" data-highlight={w.id} d={pathOf(derived.outlines.get(w.id) ?? [])} />)}
         {finished &&
           [...finished.strips].map(([id, list]) => (
             <path key={id} data-finish={id} d={list.map(pathOf).join('')} fillRule="evenodd" strokeWidth="1" vectorEffect="non-scaling-stroke" {...finishPaint(ids)} />
