@@ -431,3 +431,17 @@ export function wallAt(p: Mm, walls: WallLike[], radiusMm: number): string | nul
   }
   return best;
 }
+
+/**
+ * Where along its wall a click puts an opening's edge, in mm from a, within the wall (owner R34): the foot of the click
+ * on the centre line, or the foot of the nearest corner of the drawing's filled shapes across the wall's thickness, when
+ * that corner's foot lies within the snap radius of the click's (the drawn gap's ends). at and radiusPt in view points.
+ */
+export function openingFoot(w: Pick<WallLike, 'a' | 'b' | 'thickness'>, at: Vec, fills: SnapIndex, radiusPt: number, mmPerPt: number): number {
+  const mm = (q: Vec): Mm => ({ x: q[0] * mmPerPt, y: q[1] * mmPerPt });
+  const t = offsetOn(w, mm(at));
+  const corner = snapPoint(at, fills, radiusPt + w.thickness / 2 / mmPerPt);
+  const u = corner.to === 'end' || corner.to === 'cross' ? offsetOn(w, mm(corner.at)) : t;
+  const length = Math.hypot(w.b.x - w.a.x, w.b.y - w.a.y);
+  return Math.max(0, Math.min(length, Math.abs(u - t) <= radiusPt * mmPerPt ? u : t));
+}

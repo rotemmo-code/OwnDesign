@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Clip, ExtractedPage, PathItem } from '../../src/pdf/extract';
 import type { Vec } from '../../src/shared';
-import { alongWall, holdAxis, offsetOn, pickAt, secondEnd, snapCentre, snapFace, snapIndex, snapPoint, wallAt } from '../../src/editor/snap';
+import { alongWall, holdAxis, offsetOn, openingFoot, pickAt, secondEnd, snapCentre, snapFace, snapIndex, snapPoint, wallAt } from '../../src/editor/snap';
 
 // Synthetic pages in view points: 842 x 595 unless a test says otherwise.
 const stroke = (pts: Vec[], more: Partial<PathItem> = {}): PathItem => ({
@@ -241,5 +241,31 @@ describe('11b: handles, openings, separators and faces', () => {
     it('3 px off a face (at 4 mm a pixel)', () => expect(snapFace({ x: 400, y: 62 }, outline, 32)).toEqual({ x: 400, y: 50 }));
     it('no face within the radius', () => expect(snapFace({ x: 400, y: 200 }, outline, 32)).toBeNull());
     it('a corner', () => expect(snapFace({ x: 1010, y: 60 }, outline, 32)).toEqual({ x: 1000, y: 50 }));
+  });
+});
+
+describe('openingFoot: where along its wall a click puts an opening\'s edge (owner R34)', () => {
+  // a wall along y = 105 from x = 100 to 300, 10 thick, and the drawing's grey wall with a gap from 150 to 200; 1 mm a point
+  const wall = { a: { x: 100, y: 105 }, b: { x: 300, y: 105 }, thickness: 10 };
+  const gap = (left: number, right: number) => snapIndex(pageOf([rect(100, 100, left, 110), rect(right, 100, 300, 110)]));
+  it('a corner of the drawing within the radius is taken', () => {
+    expect(openingFoot(wall, [152, 104], gap(150, 200), 5, 1)).toBeCloseTo(50, 9);
+  });
+  it('no corner near: the click\'s own foot', () => {
+    expect(openingFoot(wall, [175, 108], gap(150, 200), 5, 1)).toBeCloseTo(75, 9);
+  });
+  it('of two corners, the nearer', () => {
+    expect(openingFoot(wall, [154, 105], gap(150, 156), 5, 1)).toBeCloseTo(56, 9);
+  });
+  it('a corner across the wall but farther along it than the radius is not taken', () => {
+    expect(openingFoot(wall, [155, 105], gap(152, 200), 2, 1)).toBeCloseTo(55, 9);
+  });
+  it('the result stays on the centre line, and within the wall', () => {
+    for (const at of [[152, 101], [175, 109], [90, 105], [320, 104]] as Vec[]) {
+      const t = openingFoot(wall, at, gap(150, 200), 5, 1);
+      expect(t).toBeGreaterThanOrEqual(0);
+      expect(t).toBeLessThanOrEqual(200);
+      expect(alongWall(wall, t).y).toBeCloseTo(105, 9);
+    }
   });
 });

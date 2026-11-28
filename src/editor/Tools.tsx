@@ -7,7 +7,7 @@ import type { Vec } from '../shared';
 import { SnapMark } from './Calibrate';
 import type { Derived } from './Overlay';
 import { WallPreview } from './Overlay';
-import { alongWall, type CentreSnap, offsetOn, pickAt, secondEnd, type Snap, type SnapIndex, snapCentre, snapFace, snapPoint, wallAt } from './snap';
+import { alongWall, type CentreSnap, offsetOn, openingFoot, pickAt, secondEnd, type Snap, type SnapIndex, snapCentre, snapFace, snapPoint, wallAt } from './snap';
 import { corners } from '../model/geo';
 
 const e = copy.editor;
@@ -224,16 +224,7 @@ export function useOpeningTool(c: EditorCtx, fills: SnapIndex, kind: Opening['ki
   const [text, setText] = useState('80');
   useEscape(() => setFirst(null));
   const wall = first && wallOf(c, first.wall);
-  /**
-   * Where along the wall a click puts an edge: the foot of the click on the centre line, or the foot of a corner of the
-   * drawing's filled shapes across the wall's thickness when that lies within reach (the drawn gap's ends).
-   */
-  const along = (w: Wall, at: Vec, r: number): number => {
-    const t = offsetOn(w, toMm(c.k, at));
-    const corner = snapPoint(at, fills, r + w.thickness / 2 / c.k);
-    const u = corner.to === 'end' || corner.to === 'cross' ? offsetOn(w, toMm(c.k, corner.at)) : t;
-    return Math.max(0, Math.min(dist(w.a, w.b), Math.abs(u - t) <= r * c.k ? u : t));
-  };
+  const along = (w: Wall, at: Vec, r: number) => openingFoot(w, at, fills, r, c.k);
   const add = (from: number, till: number) => {
     if (!first) return;
     const result = c.run({ type: 'x.addOpening', wallId: first.wall, offset: Math.min(from, till), width: Math.abs(till - from), kind });
