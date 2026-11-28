@@ -4,7 +4,7 @@ import { createRoot } from 'react-dom/client';
 import { Work } from '../../src/editor/App';
 import { useProject } from '../../src/editor/useProject';
 import type { Project } from '../../src/model/types';
-import type { ExtractedPage } from '../../src/pdf/extract';
+import type { Colour, ExtractedPage } from '../../src/pdf/extract';
 import type { Picture } from '../../src/pdf/render';
 
 function Probe({ project, page, picture }: { project: Project; page: ExtractedPage; picture: Picture }) {
@@ -12,6 +12,9 @@ function Probe({ project, page, picture }: { project: Project; page: ExtractedPa
   useEffect(() => void store.load(project), []);
   return (
     <main>
+      {/* the app's undo lives in its header, which the probe leaves out */}
+      <button type="button" data-testid="probe-undo" onClick={store.undo}>undo</button>
+      <button type="button" data-testid="probe-redo" onClick={store.redo}>redo</button>
       <div dir="ltr" data-testid="drawing">
         <Work shown={{ pageNo: 1, page, picture, turn: 1 }} draw={async () => null} calibration={project.calibration} onCalibration={() => {}} plaster={project.plaster} onPlaster={() => {}} store={store} />
       </div>
@@ -20,9 +23,9 @@ function Probe({ project, page, picture }: { project: Project; page: ExtractedPa
 }
 
 /** Replaces the app on this page with the editor over the project; resolves once it shows. */
-export async function mount(project: Project) {
+export async function mount(project: Project, colours: Colour[] = []) {
   const [width, height] = [842, 595];
-  const page: ExtractedPage = { widthPt: width, heightPt: height, rotation: 0, paths: [], clips: [[{ rings: [[[0, 0], [width, 0], [width, height], [0, height]]], evenOdd: false }]], texts: [], layers: [], colours: [] };
+  const page: ExtractedPage = { widthPt: width, heightPt: height, rotation: 0, paths: [], clips: [[{ rings: [[[0, 0], [width, 0], [width, height], [0, height]]], evenOdd: false }]], texts: [], layers: [], colours };
   const canvas = new OffscreenCanvas(width, height);
   const context = canvas.getContext('2d')!;
   context.fillStyle = 'white';

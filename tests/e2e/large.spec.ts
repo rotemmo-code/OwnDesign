@@ -82,3 +82,50 @@ test('500 walls: the walls are not drawn again while a held end moves (their mem
   await expect(page.getByTestId('wall-preview')).toBeVisible();
   expect(await renders()).toBe(before);
 });
+
+test('500 walls with the check tab open: the tab opens in time, a preview frame stays under 50 ms and the walls are not drawn again (R43)', async ({ page }) => {
+  test.setTimeout(240_000);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await serveProbe(page);
+  const project = large();
+  await page.evaluate(async p => (await import(/* @vite-ignore */ '/probe.js' as string)).mount(p), project);
+  const k = project.calibration.mmPerPt;
+  const at = async (mm: [number, number]) => onScreen(page, [mm[0] / k, mm[1] / k]);
+  await page.getByRole('group', { name: e.tools }).getByRole('button', { name: e.select, exact: true }).click();
+  await expect(page.locator('[data-wall]')).toHaveCount(500, { timeout: 60_000 });
+  const middle = 500 + 7 * CELL;
+  await page.mouse.click(...(await at([middle + CELL / 2, middle])));
+  await expect(page.getByTestId('wall-details')).toBeVisible({ timeout: 60_000 });
+  await page.mouse.click(...(await at([middle + CELL, middle])));
+  await expect(page.getByTestId('step')).toHaveText(e.moveEnd);
+  // the time from the click on the tab to its list on the screen
+  const opened = await page.evaluate(async name => {
+    const tab = [...document.querySelectorAll<HTMLButtonElement>('[role="tab"]')].find(b => b.textContent === name)!;
+    const t0 = performance.now();
+    tab.click();
+    while (!document.querySelector('[data-testid="progress"]')) await new Promise(r => requestAnimationFrame(r));
+    await new Promise(r => requestAnimationFrame(r));
+    return performance.now() - t0;
+  }, e.checkTab);
+  console.log(`500 walls: the check tab opened in ${opened.toFixed(1)} ms`);
+  const renders = () => page.evaluate(() => (globalThis as unknown as { wallRenders: number }).wallRenders);
+  const before = await renders();
+  const from = await at([middle + CELL, middle]);
+  await page.evaluate(() => {
+    const w = window as unknown as { frames_: number[] };
+    w.frames_ = [];
+    let last = performance.now();
+    const loop = (t: number) => {
+      w.frames_.push(t - last);
+      last = t;
+      if (w.frames_.length < 600) requestAnimationFrame(loop);
+    };
+    requestAnimationFrame(loop);
+  });
+  for (let i = 0; i < 60; i++) await page.mouse.move(from[0] + i, from[1] + i / 2);
+  await expect(page.getByTestId('wall-preview')).toBeVisible(); // the held end survived the tab
+  const frames: number[] = await page.evaluate(() => (window as unknown as { frames_: number[] }).frames_.slice(2));
+  console.log(`500 walls, check tab open: ${frames.length} frames, the slowest ${Math.max(...frames).toFixed(1)} ms`);
+  expect(Math.max(...frames)).toBeLessThan(50);
+  expect(await renders()).toBe(before);
+});

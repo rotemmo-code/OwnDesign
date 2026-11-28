@@ -29,3 +29,16 @@ it('the wall tool button and the undo pair read as the owner asked', () => {
   expect([copy.editor.wall, copy.editor.undo, copy.editor.redo, copy.fit]).toEqual(['הוסף קיר', 'ביטול פעולה', 'ביצוע שוב', 'איפוס תצוגה']);
   expect(Object.values(copy.editor.materials)).toEqual(['גבס', 'בלוק', 'בטון', 'אחר']);
 });
+
+it('the check list\'s strings read as the approved list has them (R45); the entry door\'s says how to draw it with the tools there are', () => {
+  const e = copy.editor;
+  expect([e.detailsTab, e.checkTab, e.progress(2, 5), ...Object.values(e.steps)]).toEqual(['פרטים', 'בדיקה לפני אישור', 'אושרו 2 מתוך 5', 'חללי הדירה', 'הממ"ד', 'דלת הכניסה', 'דלתות ומעברים', 'חלונות', 'קירות החוץ']);
+  expect([e.roomsHow, e.noMamad, e.mamadIs('סלון'), e.show, e.confirmAll, e.noDoors, e.noWindows, e.item('דלת', 1, '80'), e.allOuter, e.outerHow, e.confirmed, e.notConfirmed]).toEqual([
+    'סמנו אילו חללים שייכים לדירה.', 'אין ממ"ד', 'הממ"ד: סלון', 'הצגה', 'אישור הכול', 'אין דלתות בשרטוט.', 'אין חלונות בשרטוט.', 'דלת 1, 80 ס"מ', 'כל קירות החוץ', 'בדקו שקירות החוץ המסומנים נכונים, ואשרו.', 'אושר', 'לא אושר',
+  ]);
+  expect([e.suggest, e.acceptOne, e.acceptAll(3), e.suggestWhy, e.review, e.reviewed, e.colours, e.colourMeans('#c2327f'), e.colourExample, e.mamadQuestion]).toEqual([
+    'הצעה: קבוע', 'קבלת ההצעה', 'קבלת כל ההצעות (3)', 'קירות עם חלון, קירות על גבול הדירה ועמודים מוצעים כקבועים.', 'לבדיקה', 'נבדק', 'צבעי השרטוט של הקבלן', 'מה מסמן הצבע #c2327f', 'למשל: טיח', 'איזה חלל הוא הממ"ד, או שאין',
+  ]);
+  expect(e.noEntry).toContain(e.door);
+  expect(e.noEntry).toContain(e.openingKinds.entry);
+});
