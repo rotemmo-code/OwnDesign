@@ -1,11 +1,12 @@
 import { type ReactNode, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { copy } from '../copy';
-import type { Action, Id, Plaster, Result } from '../model/types';
+import type { Action, Id, Plaster, Project, Result } from '../model/types';
 import type { ExtractedPage } from '../pdf/extract';
 import type { Box } from '../pdf/render';
 import type { Tool } from './Canvas';
 import { derive, deriveFinish, type Lock, Overlay } from './Overlay';
 import { type Question, SidePanel, type Tab } from './SidePanel';
+import { suggestedFixed } from '../model/rules';
 import { snapIndex } from './snap';
 import { type EditorCtx, type EditTool, type Selected, Toolbar, type ToolName, useDeleteTool, useOpeningTool, useSelectTool, useSeparatorTool, useSplitTool, useWallTool } from './Tools';
 import { roomEvents, type Store } from './useProject';
@@ -31,8 +32,21 @@ export function useEditor({ store, page, plaster, measure, ptPerPx }: { store: S
   const k = project?.calibration.mmPerPt ?? 1;
   const derived = useMemo(() => project && derive(project), [project?.existing, project?.envelope, project?.wallClass]);
   // the finishes' strips and the areas after them are the costly part: they follow a moment after an edit
-  const later = useDeferredValue(project?.existing);
-  const finished = useMemo(() => later && deriveFinish(later), [later]);
+  const later = useDeferredValue(project);
+  const finished = useMemo(() => later && deriveFinish(later.existing), [later?.existing]);
+  // The suggestions only while the details tab shows them, and never inside an edit (R48): asked for after the frame
+  // that shows the edit (a timer started in the next animation frame runs once that frame is painted).
+  const [ask, setAsk] = useState<Project | null>(null);
+  useEffect(() => {
+    if (tab !== 'details' || !project) return void setAsk(null);
+    let timer = 0;
+    const frame = requestAnimationFrame(() => (timer = window.setTimeout(() => setAsk(project))));
+    return () => {
+      cancelAnimationFrame(frame);
+      clearTimeout(timer);
+    };
+  }, [project?.existing, project?.wallClass, tab]);
+  const suggestions = useMemo(() => (ask ? suggestedFixed(ask) : []), [ask?.existing, ask?.wallClass]);
   const [net, setNet] = useState(true);
   // The drawing as the editor's own last action left it. When the drawing changes otherwise (undo, redo, a rescale, a load) its
   // message and a question about rooms no longer there go; a rename or a plaster answer leaves the drawing and the message alone.
@@ -107,6 +121,9 @@ export function useEditor({ store, page, plaster, measure, ptPerPx }: { store: S
   // the contractor's colours: those the project can label, then any other the page has (never labelled, no swatch unless #rrggbb)
   const labelled = project.sourceColors;
   const colours = [...labelled, ...page.colours.filter(x => !labelled.some(y => y.hex === x.hex)).map(x => ({ hex: x.hex }))];
+  // a moment behind an edit: only the walls still there and still of no class
+  const walls = new Set(project.existing.walls.map(w => w.id));
+  const suggested = new Set(suggestions.filter(id => walls.has(id) && (project.wallClass[id] ?? 'unknown') === 'unknown'));
   const marks = (ptPerPx: number): ReactNode => (
     <Overlay
       project={project}
@@ -162,6 +179,7 @@ export function useEditor({ store, page, plaster, measure, ptPerPx }: { store: S
           setFocus(f => ({ box, turn: (f?.turn ?? 0) + 1 }));
         }}
         colours={colours}
+        suggested={suggested}
       />
     ),
   };

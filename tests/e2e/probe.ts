@@ -19,6 +19,17 @@ export const probeCode = () =>
       react(),
       { name: 'no-reader', load: id => (id.replaceAll('\\', '/') === READER ? 'export const openPdf = () => { throw new Error("no reader in the probe"); };' : undefined) },
       {
+        // when the model's suggestions run, for the probe only: they must run after an edit has painted, never inside it (R48)
+        name: 'time-suggestions',
+        enforce: 'pre',
+        transform(source: string, id: string) {
+          if (!id.replaceAll('\\', '/').endsWith('src/model/rules.ts')) return undefined;
+          const timed = source.replace(/(export function suggestedFixed\([^)]*\)[^{]*\{)/, '$1\n  ((globalThis as any).suggestCalls ??= []).push(performance.now());');
+          if (timed === source) throw new Error('the probe found no suggestedFixed to time');
+          return timed;
+        },
+      },
+      {
         // a render counter on the memoised walls, for the probe only: the product has no test hook
         name: 'count-wall-renders',
         enforce: 'pre',

@@ -129,3 +129,44 @@ test('500 walls with the check tab open: the tab opens in time, a preview frame 
   expect(Math.max(...frames)).toBeLessThan(50);
   expect(await renders()).toBe(before);
 });
+
+test('500 walls: the suggestions run after an edit has painted, never inside it (R48)', async ({ page }) => {
+  test.setTimeout(240_000);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await serveProbe(page);
+  const project = large();
+  // the whole grid as the apartment, so that there is something to suggest
+  const [lo, hi] = [500, 500 + 15 * CELL];
+  const boundary = [{ x: lo, y: lo }, { x: hi, y: lo }, { x: hi, y: hi }, { x: lo, y: hi }];
+  project.existing.rooms = [{ id: 'flat', name: '', boundary, holes: [], isMamad: false, inApartment: true, outdoor: false }];
+  await page.evaluate(async p => (await import(/* @vite-ignore */ '/probe.js' as string)).mount(p), project);
+  const k = project.calibration.mmPerPt;
+  const at = async (mm: [number, number]) => onScreen(page, [mm[0] / k, mm[1] / k]);
+  await page.getByRole('group', { name: e.tools }).getByRole('button', { name: e.select, exact: true }).click();
+  await expect(page.locator('[data-wall]')).toHaveCount(500, { timeout: 60_000 });
+  const middle = 500 + 7 * CELL;
+  await page.mouse.click(...(await at([middle + CELL / 2, middle])));
+  await expect(page.getByTestId('wall-details')).toBeVisible({ timeout: 60_000 });
+  await expect(page.getByTestId('suggestions')).toBeVisible({ timeout: 60_000 }); // settled
+  const calls = () => page.evaluate(() => ((globalThis as unknown as { suggestCalls?: number[] }).suggestCalls ?? []).slice());
+  const before = (await calls()).length;
+  const fixed = e.classes.fixed;
+  // the edit: a click on קבוע, timed from the click to the moment its result is in the page
+  const { start, painted } = await page.evaluate(async name => {
+    const group = document.querySelector('[data-testid="wall-details"] [role="group"]')!;
+    const button = [...group.querySelectorAll('button')].find(b => b.textContent === name)!;
+    let done = 0;
+    new MutationObserver((_, o) => {
+      // the edit is on the screen once the frame after it is drawn: its animation frame callbacks run just before
+      if (button.getAttribute('aria-pressed') === 'true') o.disconnect(), requestAnimationFrame(() => (done = performance.now()));
+    }).observe(button, { attributes: true });
+    const t0 = performance.now();
+    button.click();
+    while (!done) await new Promise(r => setTimeout(r, 5));
+    return { start: t0, painted: done };
+  }, fixed);
+  await expect.poll(async () => (await calls()).length, { timeout: 60_000 }).toBeGreaterThan(before);
+  const ran = (await calls())[before];
+  console.log(`500 walls: a class edit took ${(painted - start).toFixed(0)} ms; the suggestions ran ${(ran - painted).toFixed(0)} ms after it`);
+  expect(ran).toBeGreaterThan(painted);
+});

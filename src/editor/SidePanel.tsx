@@ -3,7 +3,6 @@ import { copy } from '../copy';
 import { dist } from '../model/geo';
 import { canFinish } from '../model/finish';
 import { isInside } from '../model/kind';
-import { suggestedFixed } from '../model/rules';
 import { faceLength, formatCm, formatM2, type Metrics, parseCm, roomsOnSide } from '../model/measure';
 import type { FinishPlace, Id, Opening, Plaster, Pt, Reason, Wall, WallClass, WallMaterial } from '../model/types';
 import type { Box } from '../pdf/render';
@@ -305,6 +304,8 @@ type Props = {
   onTab(tab: Tab): void;
   onShow(sel: Selected, box: Box): void;
   colours: ContractorColour[];
+  /** The walls suggested as fixed, computed a moment after an edit and only for the details tab (R48). */
+  suggested: Set<Id>;
 };
 
 const TABS: [Tab, string][] = [
@@ -363,10 +364,8 @@ export function SidePanel(props: Props) {
 }
 
 /** The details tab: the tool's panel, what is selected, the areas' switch and the legend with the suggestions. */
-function Details({ c, selected, onFix, tool, plaster, finished, net, onNet, colours }: Props) {
+function Details({ c, selected, onFix, tool, plaster, finished, net, onNet, colours, suggested }: Props) {
   const s = c.project.existing;
-  // only while this tab shows them, once per state (R43)
-  const suggested = useMemo(() => new Set(suggestedFixed(c.project)), [s, c.project.wallClass]);
   const paints = [...new Set(c.derived.paints.values())];
   const anyFinish = !!finished && finished.strips.size > 0;
   // as OpeningShape paints them: a locked one on an outer or mamad wall, a locked one on an inner wall, a free one
