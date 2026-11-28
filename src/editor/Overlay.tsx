@@ -3,8 +3,8 @@ import { copy } from '../copy';
 import { finishStrips, roomAfterFinish } from '../model/finish';
 import { corners, dist, rings } from '../model/geo';
 import { wallOutlines } from '../model/join';
-import { wallKind } from '../model/kind';
-import { formatCm, formatM2, type Metrics, roomMetrics } from '../model/measure';
+import { isInside, wallKind } from '../model/kind';
+import { formatCm, formatM2, type Metrics, roomMetrics, roomsOnSide } from '../model/measure';
 import { envelopeLeaf, envelopeSpans, mamadSpan, openingLock } from '../model/rules';
 import type { Id, Opening, Project, Pt, Reason, Room, State, Wall, WallClass } from '../model/types';
 import { COLOR, type WallKind } from '../theme';
@@ -49,6 +49,27 @@ export function derive(p: Project): Derived {
   };
 }
 
+/** A stretch of a wall that the outer walls' "אישור" locks: the ring it covers on the drawing. */
+export type Stretch = { wall: Id; ring: Pt[] };
+/**
+ * What "אישור" of the outer walls locks (R50), by the model's own rule for the envelope lock: each outer stretch of a
+ * wall with its corner joints (the mamad's outer walls too), and a facade leaf whole.
+ */
+export function outerStretches(s: State): Stretch[] {
+  // only a wall with an indoor room of the apartment or a balcony beside it has an outer stretch; a leaf lies against one
+  if (!s.rooms.some(r => isInside(r) || r.outdoor)) return [];
+  const rooms = new Map(s.rooms.map(r => [r.id, r]));
+  const outside = (w: Wall) => (['A', 'B'] as const).some(side => roomsOnSide(s, w.id, side).some(id => isInside(rooms.get(id)!) || rooms.get(id)!.outdoor));
+  const spans = new Map(s.walls.filter(outside).map(w => [w.id, envelopeSpans(s, w.id)]));
+  if (![...spans.values()].some(list => list.length)) return []; // no outer stretch: no leaf either
+  return s.walls.flatMap(w => {
+    const l = dist(w.a, w.b);
+    const list = spans.get(w.id) ?? [];
+    if (list.length) return list.map(k => ({ wall: w.id, ring: corners(alongWall(w, Math.max(0, k.from - k.before)), alongWall(w, Math.min(l, k.to + k.after)), w.thickness) }));
+    return l && envelopeLeaf(s, w) ? [{ wall: w.id, ring: corners(w.a, w.b, w.thickness) }] : [];
+  });
+}
+
 export function deriveFinish(s: State): Finished {
   return {
     strips: new Map([...finishStrips(s)].map(([id, g]) => [id, rings(g)])),
@@ -78,7 +99,7 @@ const Walls = memo(function Walls({ state, derived, ids }: { state: State; deriv
 /**
  * An opening: a white gap across its wall, with a door's arc, a window's line, or nothing for a passage; the entry door's
  * arc is heavier. Locked: the colour of its wall's kind, on an inner wall the fixed colour (R32); free: the existing
- * colour; released or not confirmed: dashed (R22).
+ * colour; released, not confirmed or for review: dashed (R22, R36).
  */
 function OpeningShape({ o, w, derived }: { o: Opening; w: Wall; derived: Derived }) {
   const [p, q] = [alongWall(w, o.offset), alongWall(w, o.offset + o.width)];
@@ -86,7 +107,7 @@ function OpeningShape({ o, w, derived }: { o: Opening; w: Wall; derived: Derived
   const locked = !!derived.openingLocks.get(o.id);
   const kind = derived.kinds.get(w.id) ?? 'existing';
   const colour = !locked ? COLOR.existing : kind === 'existing' ? COLOR.fixed : COLOR[kind];
-  const dashed = o.released || !o.confirmed ? '5 4' : undefined;
+  const dashed = o.released || !o.confirmed || o.review ? '5 4' : undefined;
   const line = { stroke: colour, strokeDasharray: dashed, vectorEffect: 'non-scaling-stroke' as const, fill: 'none' };
   return (
     <g data-opening={o.id} data-kind={o.kind} data-locked={locked} data-dashed={!!dashed} className="opening">
@@ -116,10 +137,12 @@ type Props = {
   marks?: ReactNode;
   /** Parts of a split room, numbered for the question which keeps the name. */
   parts?: Id[];
+  /** The stretches the outer walls' "אישור" locks stand out (the check list's step, R40, R50). */
+  highlight?: Stretch[] | null;
 };
 
 /** The draft over the page, in mm. Room names and areas come last: nothing is drawn over them (owner R9). */
-export function Overlay({ project, derived, finished, net, k, ptPerPx, selected, preview, marks, parts = [] }: Props) {
+export function Overlay({ project, derived, finished, net, k, ptPerPx, selected, preview, marks, parts = [], highlight = null }: Props) {
   const s = project.existing;
   const ids = usePaintIds();
   const px = ptPerPx * k; // mm per CSS pixel
@@ -146,6 +169,9 @@ export function Overlay({ project, derived, finished, net, k, ptPerPx, selected,
       <g transform={`scale(${1 / k})`}>
         <PaintDefs ids={ids} size={20} />
         <Walls state={s} derived={derived} ids={ids} />
+        {/* a wall the detector doubts: dashed around, no mark (R36) */}
+        {s.walls.map(w => w.review && <path key={w.id} className="review" data-review={w.id} d={pathOf(derived.outlines.get(w.id) ?? [])} />)}
+        {highlight?.map((x, i) => <path key={i} className="highlight" data-highlight={x.wall} d={pathOf(x.ring)} />)}
         {finished &&
           [...finished.strips].map(([id, list]) => (
             <path key={id} data-finish={id} d={list.map(pathOf).join('')} fillRule="evenodd" strokeWidth="1" vectorEffect="non-scaling-stroke" {...finishPaint(ids)} />

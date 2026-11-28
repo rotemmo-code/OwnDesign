@@ -1,38 +1,24 @@
-import { type InputHTMLAttributes, type ReactNode, useMemo, useState } from 'react';
+import { type KeyboardEvent, type ReactNode, useMemo, useState } from 'react';
 import { copy } from '../copy';
 import { dist } from '../model/geo';
 import { canFinish } from '../model/finish';
 import { isInside } from '../model/kind';
 import { faceLength, formatCm, formatM2, type Metrics, parseCm, roomsOnSide } from '../model/measure';
 import type { FinishPlace, Id, Opening, Plaster, Pt, Reason, Wall, WallClass, WallMaterial } from '../model/types';
-import { type Extra, Legend, paintText } from './Legend';
-import type { Finished, Lock } from './Overlay';
+import type { Box } from '../pdf/render';
+import { CheckList } from './CheckList';
+import { CommitField } from './CommitField';
+import { type ContractorColour, type Extra, Legend, paintText } from './Legend';
+import type { Finished, Lock, Stretch } from './Overlay';
 import { wallAt } from './snap';
+import { COLOR } from '../theme';
 import type { EditorCtx, Selected } from './Tools';
 
 const e = copy.editor;
 
 export type Question = { type: 'split'; room: Id; parts: Id[]; name: string } | { type: 'merge'; room: Id; from: Id[]; names: string };
 
-/**
- * A text field that takes what is typed on Enter or on leaving it. It keeps the focus; what is refused goes back to the
- * stored value; a stored value changed elsewhere (undo, say) shows at once.
- */
-export function CommitField({ value, onCommit, ...rest }: { value: string; onCommit(text: string): boolean } & Omit<InputHTMLAttributes<HTMLInputElement>, 'value' | 'onChange'>) {
-  const [text, setText] = useState(value);
-  const [stored, setStored] = useState(value);
-  if (stored !== value) {
-    // adjusting to a new stored value while rendering, as React advises, rather than in an effect
-    setStored(value);
-    setText(value);
-  }
-  const take = () => {
-    if (text !== value && !onCommit(text)) setText(value);
-  };
-  return <input {...rest} value={text} onChange={event => setText(event.target.value)} onBlur={take} onKeyDown={event => event.key === 'Enter' && take()} />;
-}
-
-function WallDetails({ c, id, onFix }: { c: EditorCtx; id: Id; onFix(lock: Lock): void }) {
+function WallDetails({ c, id, onFix, suggested }: { c: EditorCtx; id: Id; onFix(lock: Lock): void; suggested: boolean }) {
   const s = c.project.existing;
   const w = s.walls.find(x => x.id === id);
   // once per side and once per state, not on every pointer move: faces() is the costly part (R26, R30)
@@ -74,10 +60,16 @@ function WallDetails({ c, id, onFix }: { c: EditorCtx; id: Id; onFix(lock: Lock)
           }}
         />
       </label>
+      <Review c={c} id={id} review={w.review} />
       <div role="group" aria-label={e.classLabel}>
         <span>
           {e.classLabel}: {e.classes[cls]}
         </span>
+        {suggested && (
+          <span data-testid="suggestion">
+            {e.suggest} <button type="button" onClick={() => c.run({ type: 'classify', wallId: id, cls: 'fixed' })}>{e.acceptOne}</button>
+          </span>
+        )}
         {(['fixed', 'changeable', 'unknown'] as const).map(name => (
           <button key={name} type="button" aria-pressed={cls === name} onClick={() => cls !== name && c.run({ type: 'classify', wallId: id, cls: name })}>
             {e.classes[name]}
@@ -154,6 +146,14 @@ function Finishes({ c, w, sides }: { c: EditorCtx; w: Wall; sides: Record<'A' | 
   );
 }
 
+/** An item the detector doubts: the word לבדיקה, and נבדק (R36). */
+const Review = ({ c, id, review }: { c: EditorCtx; id: Id; review: boolean }) =>
+  review && (
+    <p data-testid="review">
+      {e.review} <button type="button" onClick={() => c.run({ type: 'x.clearReview', id })}>{e.reviewed}</button>
+    </p>
+  );
+
 const LOCK_TEXT: Partial<Record<Reason, string>> = { 'window-locked': e.windowLocked, 'entry-door-locked': e.entryLocked, 'mamad-locked': e.mamadOpeningLocked };
 
 /** An opening: its kind, its width, and its lock in words, with "תיקון", or "אישור" once released (owner R22, R23). */
@@ -176,6 +176,7 @@ function OpeningDetails({ c, id }: { c: EditorCtx; id: Id }) {
       ) : (
         <p data-testid="lock">{e.free}</p>
       )}
+      <Review c={c} id={id} review={o.review} />
       <div role="group" aria-label={e.openingKind}>
         <span>{e.openingKind}</span>
         {(['door', 'entry', 'window', 'passage'] as Opening['kind'][]).map(kind => (
@@ -282,14 +283,15 @@ function Asked({ c, question, onDone }: { c: EditorCtx; question: Question; onDo
   );
 }
 
+export type Tab = 'details' | 'check';
 type Props = {
   c: EditorCtx;
   selected: Selected;
   message: string;
   question: Question | null;
   onQuestionDone(): void;
-  /** The mamad, while its mark was taken back to correct its walls. */
-  mamadWas: { id: Id; name: string } | null;
+  /** The mamad, while its mark was taken back; fix: by its "תיקון", else the model cleared it. */
+  mamadWas: { id: Id; name: string; fix: boolean } | null;
   onFix(lock: Lock): void;
   onConfirmMamad(): void;
   tool: ReactNode;
@@ -298,39 +300,113 @@ type Props = {
   /** Areas after the finishes, or up to the drawn walls (only while some finish exists). */
   net: boolean;
   onNet(net: boolean): void;
+  tab: Tab;
+  onTab(tab: Tab): void;
+  onShow(sel: Selected, box: Box): void;
+  colours: ContractorColour[];
+  /** The walls suggested as fixed, computed a moment after an edit and only for the details tab (R48). */
+  suggested: Set<Id>;
+  /** What the outer walls' "אישור" locks, while the check tab is open; null until known. */
+  stretches: Stretch[] | null;
 };
 
-export function SidePanel({ c, selected, message, question, onQuestionDone, mamadWas, onFix, onConfirmMamad, tool, plaster, finished, net, onNet }: Props) {
+const TABS: [Tab, string][] = [
+  ['details', e.detailsTab],
+  ['check', e.checkTab],
+];
+
+/** The message, the open questions and rows, then two tabs: the details of what is selected, and the check before approval. */
+export function SidePanel(props: Props) {
+  const { c, message, question, onQuestionDone, mamadWas, onConfirmMamad, tab, onTab } = props;
+  // the tab pattern: arrows move to the other tab and open it, Home and End to the first and last (R41)
+  const key = (event: KeyboardEvent<HTMLButtonElement>) => {
+    const i = TABS.findIndex(([name]) => name === tab);
+    const to = { ArrowLeft: i + 1, ArrowRight: i - 1, Home: 0, End: TABS.length - 1 }[event.key];
+    if (to === undefined) return;
+    event.preventDefault();
+    const [name] = TABS[(to + TABS.length) % TABS.length];
+    onTab(name);
+    document.getElementById(`tab-${name}`)?.focus();
+  };
+  return (
+    <div className="editor-panel">
+      {/* the panel's text scrolls; the legend under it is always in view, in both tabs, and covers nothing (S1) */}
+      <div className="panel-body">
+        {/* always there, empty unless something is said: a live region that appears with its text is not always read */}
+        <p aria-live="polite" className="message" data-testid="message">{message}</p>
+        {question && <Asked key={`${question.type}-${question.room}`} c={c} question={question} onDone={onQuestionDone} />}
+        {c.project.envelope === 'released' && c.project.existing.rooms.some(isInside) && (
+          <p className="lock">
+            {e.envelopeOpen} <button type="button" onClick={() => c.run({ type: 'x.confirmEnvelope' })}>{e.confirm}</button>
+          </p>
+        )}
+        {/* while the mark is taken back: after "אישור", or an undo of the release, no room is left unmarked */}
+        {mamadWas && !c.project.existing.rooms.some(r => r.isMamad) && (
+          <p className="lock" data-testid="mamad-row">
+            {/* a mark the model cleared (its room merged) was no "תיקון": it is marked again by hand */}
+            {mamadWas.fix ? (
+              <>
+                {e.mamadOpen(mamadWas.name)} <button type="button" onClick={onConfirmMamad}>{e.confirm}</button>
+              </>
+            ) : (
+              e.mamadChanged
+            )}
+          </p>
+        )}
+        <div role="tablist" className="panel-tabs" aria-label={e.panelTabs}>
+          {TABS.map(([name, text]) => (
+            <button key={name} id={`tab-${name}`} type="button" role="tab" aria-selected={tab === name} aria-controls="tab-panel" tabIndex={tab === name ? 0 : -1} onClick={() => onTab(name)} onKeyDown={key}>
+              {text}
+            </button>
+          ))}
+        </div>
+        <div role="tabpanel" id="tab-panel" aria-labelledby={`tab-${tab}`}>
+          {tab === 'check' ? <CheckList c={c} onFix={props.onFix} onShow={props.onShow} stretches={props.stretches} /> : <Details {...props} />}
+        </div>
+      </div>
+      <PanelLegend {...props} />
+    </div>
+  );
+}
+
+/** The legend of every paint on the drawing; in the details tab with the suggestions too (R48). */
+function PanelLegend({ c, finished, colours, suggested, tab, stretches }: Props) {
   const s = c.project.existing;
   const paints = [...new Set(c.derived.paints.values())];
   const anyFinish = !!finished && finished.strips.size > 0;
   // as OpeningShape paints them: a locked one on an outer or mamad wall, a locked one on an inner wall, a free one
-  const paintOf = (o: Opening): Extra => (!c.derived.openingLocks.get(o.id) ? 'opening-free' : (c.derived.kinds.get(o.wallId) ?? 'existing') === 'existing' ? 'opening-locked-inner' : 'opening-locked');
+  const kindOf = (o: Opening) => c.derived.kinds.get(o.wallId) ?? 'existing';
+  const paintOf = (o: Opening): Extra => (!c.derived.openingLocks.get(o.id) ? 'opening-free' : kindOf(o) === 'existing' ? 'opening-locked-inner' : 'opening-locked');
   const openingPaints = new Set(s.openings.map(paintOf));
+  const lockedKinds = new Set(s.openings.filter(o => paintOf(o) === 'opening-locked').map(kindOf));
   const extras: Extra[] = [
     ...(['opening-locked', 'opening-locked-inner', 'opening-free'] as const).filter(x => openingPaints.has(x)),
     ...(s.openings.some(o => o.released || !o.confirmed) ? (['unconfirmed'] as const) : []),
+    ...(s.openings.some(o => o.review) || s.walls.some(w => w.review) ? (['review'] as const) : []),
+    ...(tab === 'check' && stretches?.length ? (['outer'] as const) : []),
     ...(s.separators.length ? (['separator'] as const) : []),
     ...(anyFinish ? (['finish'] as const) : []),
   ];
+  const acceptAll = () => c.runAll([...suggested].map(wallId => ({ type: 'classify', wallId, cls: 'fixed' }) as const));
   return (
-    <div className="editor-panel">
-      {/* always there, empty unless something is said: a live region that appears with its text is not always read */}
-      <p aria-live="polite" className="message" data-testid="message">{message}</p>
-      {question && <Asked key={`${question.type}-${question.room}`} c={c} question={question} onDone={onQuestionDone} />}
-      {c.project.envelope === 'released' && c.project.existing.rooms.some(isInside) && (
-        <p className="lock">
-          {e.envelopeOpen} <button type="button" onClick={() => c.run({ type: 'x.confirmEnvelope' })}>{e.confirm}</button>
-        </p>
-      )}
-      {/* while the mark is taken back: after "אישור", or an undo of the release, no room is left unmarked */}
-      {mamadWas && !c.project.existing.rooms.some(r => r.isMamad) && (
-        <p className="lock">
-          {e.mamadOpen(mamadWas.name)} <button type="button" onClick={onConfirmMamad}>{e.confirm}</button>
-        </p>
-      )}
+    <Legend
+      paints={paints}
+      extras={extras}
+      lockedColours={(['exterior', 'mamad'] as const).filter(k => lockedKinds.has(k)).map(k => COLOR[k])}
+      suggest={tab === 'details' ? { n: suggested.size, onAccept: acceptAll } : undefined}
+      colours={colours}
+      onLabel={(hex, label) => c.run({ type: 'n.setColorLabel', hex, label }).ok}
+    />
+  );
+}
+
+/** The details tab: the tool's panel, what is selected, the areas' switch. */
+function Details({ c, selected, onFix, tool, plaster, finished, net, onNet, suggested }: Props) {
+  const anyFinish = !!finished && finished.strips.size > 0;
+  return (
+    <>
       {tool}
-      {selected?.kind === 'wall' && <WallDetails c={c} id={selected.id} onFix={onFix} />}
+      {selected?.kind === 'wall' && <WallDetails c={c} id={selected.id} onFix={onFix} suggested={suggested.has(selected.id)} />}
       {selected?.kind === 'opening' && <OpeningDetails c={c} id={selected.id} />}
       {selected?.kind === 'room' && <RoomDetails c={c} id={selected.id} plaster={plaster} onFix={onFix} finished={net ? finished : null} />}
       {/* the areas' statement and switch, only while some finish exists */}
@@ -341,7 +417,6 @@ export function SidePanel({ c, selected, message, question, onQuestionDone, mama
           <button type="button" aria-pressed={!net} onClick={() => onNet(false)}>{e.grossButton}</button>
         </div>
       )}
-      <Legend paints={paints} extras={extras} />
-    </div>
+    </>
   );
 }

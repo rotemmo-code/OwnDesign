@@ -19,6 +19,8 @@ export type EditorCtx = {
   derived: Derived;
   /** Through the store; a refusal is said in the message line. */
   run(a: Action): Result;
+  /** Several actions as one step of the history: one undo takes them all back (R47). */
+  runAll(actions: Action[]): Result;
   /** mm per view point. */
   k: number;
   selected: Selected;
@@ -259,7 +261,7 @@ export function useOpeningTool(c: EditorCtx, fills: SnapIndex, kind: Opening['ki
       // a first click whose wall is gone (undone) counts for nothing
       if (!first || !wall) {
         const w = under && wallOf(c, under);
-        if (!w) return c.say(e.openingFirst);
+        if (!w) return c.say(e.noWall);
         return setFirst({ wall: w.id, t: along(w, at, r) });
       }
       if (under && under !== first.wall) return c.say(e.otherWall);

@@ -14,7 +14,7 @@ import './editor.css';
 import { useMeasure } from './MeasureTool';
 import { snapIndex } from './snap';
 import { Upload } from './Upload';
-import { CommitField } from './SidePanel';
+import { CommitField } from './CommitField';
 import { newProject, rescaled, type Store, useProject } from './useProject';
 
 /** turn: of the request that showed it, so that a page shown again starts afresh. */
@@ -232,7 +232,7 @@ export function Work({ shown: { page, pageNo, picture }, draw, calibration, onCa
       <div className="view-row" dir="rtl">
         {edit?.head}
       </div>
-      <Canvas page={page} pageNo={pageNo} picture={picture} draw={draw} onPick={tool.pick} onHover={tool.hover} strength={edit?.strength} onScale={setPtPerPx}>
+      <Canvas page={page} pageNo={pageNo} picture={picture} draw={draw} onPick={tool.pick} onHover={tool.hover} strength={edit?.strength} onScale={setPtPerPx} focus={edit?.focus}>
         {tool.marks}
       </Canvas>
       <aside dir="rtl" className="panel">

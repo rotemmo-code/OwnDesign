@@ -1,6 +1,9 @@
 import { expect, it } from 'vitest';
 import { copy } from '../../src/copy';
-import { createStore, newProject, rescaled, roomEvents } from '../../src/editor/useProject';
+import { checkProgress } from '../../src/editor/CheckList';
+import { outerStretches } from '../../src/editor/Overlay';
+import { createStore, newProject, releasedAfter, rescaled, roomEvents } from '../../src/editor/useProject';
+import { confirmationGaps, envelopeLeaf, envelopeSpans } from '../../src/model/rules';
 import { apply } from '../../src/model/apply';
 import { ProjectSchema } from '../../src/model/schema';
 import type { Action, Project } from '../../src/model/types';
@@ -154,13 +157,13 @@ it('released: the mamad whose mark was taken back, read from the history; nothin
   store.dispatch({ type: 'setMamad', room: 'room-b' });
   expect(store.released).toBeNull();
   store.dispatch({ type: 'setMamad', room: null }); // "תיקון"
-  expect(store.released).toEqual({ id: 'room-b', name: 'B' });
+  expect(store.released).toEqual({ id: 'room-b', name: 'B', fix: true });
   store.dispatch({ type: 'setName', name: 'meanwhile' });
-  expect(store.released).toEqual({ id: 'room-b', name: 'B' });
+  expect(store.released).toEqual({ id: 'room-b', name: 'B', fix: true });
   store.dispatch({ type: 'setMamad', room: 'room-b' }); // "אישור"
   expect(store.released).toBeNull();
   store.undo();
-  expect(store.released).toEqual({ id: 'room-b', name: 'B' });
+  expect(store.released).toEqual({ id: 'room-b', name: 'B', fix: true });
   store.undo();
   store.undo();
   expect(store.released).toBeNull(); // the mark itself
@@ -168,7 +171,109 @@ it('released: the mamad whose mark was taken back, read from the history; nothin
   expect(store.released).toBeNull(); // before it: nothing was ever released
   store.redo();
   store.redo();
-  expect(store.released).toEqual({ id: 'room-b', name: 'B' });
+  expect(store.released).toEqual({ id: 'room-b', name: 'B', fix: true });
   store.load(open());
   expect(store.released).toBeNull();
+});
+
+it('released: the answer אין ממ"ד after a release is an answer, not a release (R39); undo brings the release back', () => {
+  const store = createStore();
+  store.load(open());
+  store.dispatch({ type: 'setMamad', room: 'room-b' });
+  store.dispatch({ type: 'setMamad', room: null }); // "תיקון"
+  expect(store.released).toEqual({ id: 'room-b', name: 'B', fix: true });
+  store.dispatch({ type: 'setMamad', room: 'none' });
+  expect(store.project!.mamad).toBe('none');
+  expect(store.released).toBeNull();
+  store.undo();
+  expect(store.released).toEqual({ id: 'room-b', name: 'B', fix: true });
+  store.load(open());
+  store.dispatch({ type: 'setMamad', room: 'none' }); // answered with no release before it
+  expect(store.released).toBeNull();
+});
+
+it('releasedAfter: a mark the model clears (a merge) is no release by "תיקון"; a mark kept or an answer given ends a release', () => {
+  const marked = (p: Project, id: string | null): Project => ({ ...p, mamad: id, existing: { ...p.existing, rooms: p.existing.rooms.map(r => ({ ...r, isMamad: r.id === id })) } });
+  const p = open();
+  const fix = { type: 'setMamad', room: null } as const;
+  const other = { type: 'x.deleteWall', id: 'part' } as const;
+  expect(releasedAfter(marked(p, 'room-b'), marked(p, null), fix, null)).toEqual({ id: 'room-b', name: 'B', fix: true });
+  expect(releasedAfter(marked(p, 'room-b'), marked(p, null), other, null)).toEqual({ id: 'room-b', name: 'B', fix: false });
+  const was = { id: 'room-b', name: 'B', fix: true };
+  expect(releasedAfter(marked(p, null), marked(p, null), other, was)).toBe(was); // carried while nothing is marked
+  expect(releasedAfter(marked(p, null), marked(p, 'room-a'), { type: 'setMamad', room: 'room-a' }, was)).toBeNull();
+  expect(releasedAfter(marked(p, null), { ...marked(p, null), mamad: 'none' }, { type: 'setMamad', room: 'none' }, was)).toBeNull();
+});
+
+it('dispatchAll: n walls classed in one step: one undo returns all, one redo re-applies all, the earlier history stays (R47)', () => {
+  const store = createStore();
+  store.load(open());
+  store.dispatch({ type: 'setName', name: 'before' });
+  const ids = ['top', 'right', 'bottom', 'left'];
+  const r = store.dispatchAll(ids.map(wallId => ({ type: 'classify', wallId, cls: 'fixed' }) as const));
+  expect(r.ok).toBe(true);
+  const cls = () => ids.map(id => store.project!.wallClass[id] ?? 'unknown');
+  expect(cls()).toEqual(['fixed', 'fixed', 'fixed', 'fixed']);
+  store.undo();
+  expect(cls()).toEqual(['unknown', 'unknown', 'unknown', 'unknown']);
+  expect(store.project!.name).toBe('before');
+  store.redo();
+  expect(cls()).toEqual(['fixed', 'fixed', 'fixed', 'fixed']);
+  store.undo();
+  store.undo(); // the step before the batch is still there
+  expect(store.project!.name).toBe('box');
+  expect(store.canUndo).toBe(false);
+});
+
+it('dispatchAll: a refusal anywhere changes nothing and pushes nothing; an empty list is refused', () => {
+  const store = createStore();
+  store.load(open());
+  const before = store.project;
+  expect(store.dispatchAll([{ type: 'classify', wallId: 'top', cls: 'fixed' }, { type: 'classify', wallId: 'nope', cls: 'fixed' }])).toEqual({ ok: false, reason: 'invalid-action' });
+  expect(store.project).toBe(before);
+  expect(store.canUndo).toBe(false);
+  expect(store.dispatchAll([]).ok).toBe(false);
+});
+
+it('outerStretches: one ring per envelope stretch of the model, the outer walls of the mamad included, each inside its wall (R50)', () => {
+  const p = open();
+  const s = { ...p.existing, rooms: p.existing.rooms.map(r => (r.id === 'room-b' ? { ...r, isMamad: true } : r)) };
+  const got = outerStretches(s);
+  const spans = s.walls.flatMap(w => envelopeSpans(s, w.id).map(() => w.id));
+  const leaves = s.walls.filter(w => !envelopeSpans(s, w.id).length && envelopeLeaf(s, w)).map(w => w.id);
+  expect(got.map(x => x.wall).sort()).toEqual([...spans, ...leaves].sort());
+  expect(new Set(got.map(x => x.wall))).toEqual(new Set(['top', 'right', 'bottom', 'left']));
+  for (const { wall, ring } of got) {
+    const w = s.walls.find(x => x.id === wall)!;
+    const [x0, x1] = [Math.min(w.a.x, w.b.x) - w.thickness, Math.max(w.a.x, w.b.x) + w.thickness];
+    for (const q of ring) expect(q.x >= x0 && q.x <= x1, wall).toBe(true);
+  }
+});
+
+it('checkProgress: all exactly when confirmationGaps is empty and the mamad is answered; an opening outside the apartment is not counted (R49)', () => {
+  const base = open();
+  const withOpening = (p: Project, o: Partial<Project['existing']['openings'][number]>) => ({ ...p, existing: { ...p.existing, openings: [...p.existing.openings, { ...p.existing.openings[0], id: 'outside', wallId: 'right', offset: 1000, width: 800, kind: 'door' as const, ...o }] } });
+  const notApartmentB = (p: Project): Project => ({ ...p, existing: { ...p.existing, rooms: p.existing.rooms.map(r => (r.id === 'room-b' ? { ...r, inApartment: false } : r)) } });
+  const confirmed = (p: Project): Project => ({ ...p, envelope: 'confirmed', mamad: 'none' });
+  const cases: Project[] = [
+    base,
+    confirmed(base),
+    { ...confirmed(base), mamad: null },
+    { ...confirmed(base), existing: { ...base.existing, openings: base.existing.openings.map(o => (o.id === 'door' ? { ...o, released: true, confirmed: false } : o)) } },
+    { ...confirmed(base), existing: { ...base.existing, openings: base.existing.openings.map(o => (o.id === 'window' ? { ...o, confirmed: false } : o)) } },
+    withOpening(notApartmentB(confirmed(base)), { confirmed: false }),
+    withOpening(notApartmentB(confirmed(base)), { confirmed: false, released: true }),
+    { ...confirmed(base), envelope: 'released' },
+    { ...confirmed(base), envelope: undefined },
+  ];
+  for (const [i, p] of cases.entries()) {
+    const { n, m } = checkProgress(p);
+    const answered = p.mamad === 'none' || p.existing.rooms.some(r => r.isMamad);
+    expect(n === m, `case ${i}`).toBe(confirmationGaps(p).length === 0 && answered);
+  }
+  // a door outside the apartment, not confirmed: the count is the same as without it
+  const without = checkProgress(notApartmentB(confirmed(base)));
+  const outside = checkProgress(withOpening(notApartmentB(confirmed(base)), { confirmed: false }));
+  expect([outside.n, outside.m]).toEqual([without.n, without.m]);
+  expect(outside.counted.has('outside')).toBe(false);
 });

@@ -2,7 +2,7 @@ import { expect, type Page, test } from '@playwright/test';
 import { copy } from '../../src/copy';
 import { COLOR } from '../../src/theme';
 import { viewOf } from '../fixtures/dims';
-import { canvas, clickMm, drawFive, drawOpening, drawWall, e, FIVE, hoverMm, message, O, onScreen, pick, start, tool, twoRooms, wallBoxes, watch } from './editorKit';
+import { canvas, clickMm, drawFive, drawOpening, drawWall, e, FIVE, hoverMm, K, message, O, onScreen, pick, start, tool, twoRooms, wallBoxes, watch } from './editorKit';
 
 // Task 11b: openings, separators, splitting, moves of wall ends and opening edges, finishes and net areas.
 watch();
@@ -80,7 +80,7 @@ test('the opening tool: a first click on no wall says what to do; a first click 
   await drawWall(page, FIVE[4]);
   await tool(page, e.door);
   await clickMm(page, [1700, 2200]);
-  await expect(message(page)).toHaveText(e.openingFirst);
+  await expect(message(page)).toHaveText(e.noWall);
   await clickMm(page, [3250, 1200]);
   await expect(step(page)).toHaveText(e.openingSecond);
   await page.keyboard.press('Control+z');
@@ -387,7 +387,9 @@ test('a free end moved one pixel off its axis stays on the axis, as in the wall 
   await clickMm(page, [3250, -600], [1, 0]); // above the drawing: nothing to snap to
   const [box] = await wallBoxes(page);
   expect([box[0], box[2]]).toEqual([3200, 3300]);
-  expect(Math.abs(box[1] + 600)).toBeLessThan(3);
+  // where the click was, within one screen pixel (Firefox clicks on whole pixels; at this zoom a pixel is about 4 mm)
+  const mmPerPx = await canvas(page).evaluate((svg: SVGSVGElement, k) => k / svg.getScreenCTM()!.a, K);
+  expect(Math.abs(box[1] + 600)).toBeLessThanOrEqual(mmPerPx);
 });
 
 test('a finish of 2 cm on one side changes only that side\'s room and shows קיר and אחרי גימור', async ({ page }) => {

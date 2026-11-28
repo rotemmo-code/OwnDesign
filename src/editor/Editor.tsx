@@ -1,15 +1,32 @@
 import { type ReactNode, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { copy } from '../copy';
-import type { Action, Id, Plaster, Result } from '../model/types';
+import type { Action, Id, Plaster, Project, Result } from '../model/types';
 import type { ExtractedPage } from '../pdf/extract';
+import type { Box } from '../pdf/render';
 import type { Tool } from './Canvas';
-import { derive, deriveFinish, type Lock, Overlay } from './Overlay';
-import { type Question, SidePanel } from './SidePanel';
+import { derive, deriveFinish, type Lock, Overlay, outerStretches } from './Overlay';
+import { type Question, SidePanel, type Tab } from './SidePanel';
+import { suggestedFixed } from '../model/rules';
 import { snapIndex } from './snap';
 import { type EditorCtx, type EditTool, type Selected, Toolbar, type ToolName, useDeleteTool, useOpeningTool, useSelectTool, useSeparatorTool, useSplitTool, useWallTool } from './Tools';
 import { roomEvents, type Store } from './useProject';
 
 const e = copy.editor;
+
+/** value once the frame that shows it is painted (a timer started in the next animation frame runs after it), while active. */
+function useAfterPaint<T>(value: T | null, active: boolean): T | null {
+  const [ready, setReady] = useState<T | null>(null);
+  useEffect(() => {
+    if (!active || value === null) return void setReady(null);
+    let timer = 0;
+    const frame = requestAnimationFrame(() => (timer = window.setTimeout(() => setReady(() => value))));
+    return () => {
+      cancelAnimationFrame(frame);
+      clearTimeout(timer);
+    };
+  }, [value, active]);
+  return ready;
+}
 
 /**
  * The editor of the existing state, as a tool of the page's one Canvas: its marks, its row of tools and its panel.
@@ -23,12 +40,21 @@ export function useEditor({ store, page, plaster, measure, ptPerPx }: { store: S
   const [message, setMessage] = useState('');
   const [question, setQuestion] = useState<Question | null>(null);
   const [strength, setStrength] = useState(100);
+  const [tab, setTab] = useState<Tab>('details');
+  // a new turn fits the view to an item shown from the check list (R42)
+  const [focus, setFocus] = useState<{ box: Box; turn: number } | null>(null);
   const project = store.project;
   const k = project?.calibration.mmPerPt ?? 1;
   const derived = useMemo(() => project && derive(project), [project?.existing, project?.envelope, project?.wallClass]);
   // the finishes' strips and the areas after them are the costly part: they follow a moment after an edit
-  const later = useDeferredValue(project?.existing);
-  const finished = useMemo(() => later && deriveFinish(later), [later]);
+  const later = useDeferredValue(project);
+  const finished = useMemo(() => later && deriveFinish(later.existing), [later?.existing]);
+  // The suggestions only while the details tab shows them, and what the outer walls' "אישור" locks only while the check
+  // tab does: both asked for after the frame that shows an edit, never inside it (R48, R50)
+  const askSuggest = useAfterPaint(project, tab === 'details');
+  const askOuter = useAfterPaint(project?.existing ?? null, tab === 'check');
+  const stretches = useMemo(() => (askOuter ? outerStretches(askOuter) : null), [askOuter]);
+  const suggestions = useMemo(() => (askSuggest ? suggestedFixed(askSuggest) : []), [askSuggest?.existing, askSuggest?.wallClass]);
   const [net, setNet] = useState(true);
   // The drawing as the editor's own last action left it. When the drawing changes otherwise (undo, redo, a rescale, a load) its
   // message and a question about rooms no longer there go; a rename or a plaster answer leaves the drawing and the message alone.
@@ -43,13 +69,14 @@ export function useEditor({ store, page, plaster, measure, ptPerPx }: { store: S
     setQuestion(q => (q && holds(q) ? q : null));
   }, [drawing]);
 
-  const run = (a: Action): Result => {
+  // one action, or several as one step of the history (R47)
+  const run = (a: Action | Action[]): Result => {
     const before = store.project!;
-    const r = store.dispatch(a);
+    const r = Array.isArray(a) ? store.dispatchAll(a) : store.dispatch(a);
     if (r.ok) ran.current = r.project.existing;
     if (!r.ok) {
       // an opening on a mamad wall opens by itself (its "תיקון"), not by releasing the mamad (owner R35)
-      const ofOpening = a.type === 'x.setOpening' || a.type === 'x.deleteOpening';
+      const ofOpening = !Array.isArray(a) && (a.type === 'x.setOpening' || a.type === 'x.deleteOpening');
       setMessage(ofOpening && r.reason === 'mamad-locked' ? e.mamadOpeningLocked : (copy.reason[r.reason] ?? e.reasonOther));
       return r;
     }
@@ -72,7 +99,7 @@ export function useEditor({ store, page, plaster, measure, ptPerPx }: { store: S
     if (selected && !list[selected.kind].some(x => x.id === selected.id)) setSelected(null);
     return r;
   };
-  const ctx: EditorCtx | null = project && derived && { project, derived, run, k, selected, select: setSelected, say: setMessage };
+  const ctx: EditorCtx | null = project && derived && { project, derived, run, runAll: run, k, selected, select: setSelected, say: setMessage };
   // the hooks run every time, with or without a project, so that their state keeps its place
   const stub = { project: null, derived: null } as unknown as EditorCtx;
   const mmPerPx = ptPerPx * k;
@@ -99,6 +126,12 @@ export function useEditor({ store, page, plaster, measure, ptPerPx }: { store: S
     if (!project.existing.rooms.some(r => r.id === released.id)) return setMessage(e.mamadChanged);
     run({ type: 'setMamad', room: released.id });
   };
+  // the contractor's colours: those the project can label, then any other the page has (never labelled, no swatch unless #rrggbb)
+  const labelled = project.sourceColors;
+  const colours = [...labelled, ...page.colours.filter(x => !labelled.some(y => y.hex === x.hex)).map(x => ({ hex: x.hex }))];
+  // a moment behind an edit: only the walls still there and still of no class
+  const walls = new Set(project.existing.walls.map(w => w.id));
+  const suggested = new Set(suggestions.filter(id => walls.has(id) && (project.wallClass[id] ?? 'unknown') === 'unknown'));
   const marks = (ptPerPx: number): ReactNode => (
     <Overlay
       project={project}
@@ -111,6 +144,7 @@ export function useEditor({ store, page, plaster, measure, ptPerPx }: { store: S
       preview={active.preview?.(ptPerPx)}
       marks={tool === 'measure' ? measure.marks(ptPerPx) : active.marks?.(ptPerPx)}
       parts={question?.type === 'split' ? question.parts : []}
+      highlight={stretches}
     />
   );
   return {
@@ -118,6 +152,7 @@ export function useEditor({ store, page, plaster, measure, ptPerPx }: { store: S
     hover: active.hover,
     marks,
     strength,
+    focus,
     head: (
       <Toolbar
         tool={tool}
@@ -136,7 +171,8 @@ export function useEditor({ store, page, plaster, measure, ptPerPx }: { store: S
         message={message}
         question={question}
         onQuestionDone={() => setQuestion(null)}
-        mamadWas={released && { id: released.id, name: released.name || e.unnamed }}
+        // by its name now: renamed while unmarked, the room keeps its new name in the row
+        mamadWas={released && { ...released, name: (project.existing.rooms.find(r => r.id === released.id)?.name ?? released.name) || e.unnamed }}
         onFix={fix}
         onConfirmMamad={confirmMamad}
         tool={active.panel}
@@ -144,6 +180,15 @@ export function useEditor({ store, page, plaster, measure, ptPerPx }: { store: S
         finished={finished ?? null}
         net={net}
         onNet={setNet}
+        tab={tab}
+        onTab={setTab}
+        onShow={(sel, box) => {
+          setSelected(sel);
+          setFocus(f => ({ box, turn: (f?.turn ?? 0) + 1 }));
+        }}
+        colours={colours}
+        suggested={suggested}
+        stretches={stretches}
       />
     ),
   };

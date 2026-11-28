@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { moved, visiblePart, wheelFactor, whole, zoomed } from '../../src/editor/view';
+import { framed, moved, visiblePart, wheelFactor, whole, zoomed } from '../../src/editor/view';
 
 const PAGE = { widthPt: 842, heightPt: 595 };
 const near = (got: readonly number[] | undefined, want: number[]) => {
@@ -49,4 +49,11 @@ it('one notch of the wheel is one step, in pixels, in lines or in pages', () => 
   expect(wheelFactor({ deltaY: -1000, deltaMode: 0 })).toBeCloseTo(Math.exp(0.22), 9);
   expect(wheelFactor({ deltaY: 10, deltaMode: 0 })).toBeCloseTo(Math.exp(-0.022), 9); // a touchpad, a little at a time
   expect(wheelFactor({ deltaY: 0, deltaMode: 0 })).toBe(1);
+});
+
+it('framed: a box with half its larger side around it, centred on it; a tiny box gets at least a 16th of the page (R42)', () => {
+  near(framed([200, 100, 100, 50], PAGE), [150, 50, 200, 150]);
+  near(framed([400, 300, 0, 0], PAGE), [400 - 842 / 32, 300 - 842 / 32, 842 / 16, 842 / 16]);
+  near(framed([400, 300, 10, 2], PAGE), [405 - 842 / 32, 301 - 842 / 32, 842 / 16, 842 / 16]);
+  near(framed([0, 0, 842, 595], PAGE), [-421, -421, 1684, 1437]); // a box as large as the page: twice the width, no more
 });

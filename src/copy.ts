@@ -219,6 +219,45 @@ export const copy = {
     freeOpening: 'פתח שאפשר לשנות',
     separatorLegend: 'קו הפרדה',
     finishLegend: 'שכבת גימור',
+    /** Owner R46: a first click of the opening tool on no wall, in words other than the step's. */
+    noWall: 'במקום הזה אין קיר. פתח נמצא תמיד בתוך קיר.',
+    // Task 11c: the check before approval, the suggestions, the contractor's colours
+    detailsTab: 'פרטים',
+    checkTab: 'בדיקה לפני אישור',
+    panelTabs: 'פרטים או בדיקה',
+    progress: (n: number, m: number) => `אושרו ${n} מתוך ${m}`,
+    steps: { rooms: 'חללי הדירה', mamad: 'הממ"ד', entry: 'דלת הכניסה', doors: 'דלתות ומעברים', windows: 'חלונות', envelope: 'קירות החוץ' },
+    roomsHow: 'סמנו אילו חללים שייכים לדירה.',
+    /** M4: the steps with nothing to check yet say how to go on. */
+    noRooms: 'עדיין אין חללים. ציירו את הקירות בכלי "הוסף קיר": כל חלל שהקירות סוגרים יופיע כאן.',
+    noOuter: 'עדיין אין קירות חוץ. סמנו בשלב "חללי הדירה" אילו חללים שייכים לדירה: הקירות שבגבולם הם קירות החוץ.',
+    mamadQuestion: 'איזה חלל הוא הממ"ד, או שאין',
+    noMamad: 'אין ממ"ד',
+    mamadIs: (name: string) => `הממ"ד: ${name}`,
+    show: 'הצגה',
+    confirmAll: 'אישור הכול',
+    /** The approved text named a tool "פתח" and a kind to draw in; the tool is "הוסף דלת" and the kind is chosen after (R21). */
+    noEntry: 'עדיין אין דלת כניסה. ציירו דלת בכלי "הוסף דלת", ובחרו לה את הסוג "דלת כניסה".',
+    noDoors: 'אין דלתות בשרטוט.',
+    noWindows: 'אין חלונות בשרטוט.',
+    item: (kind: string, i: number, width: string) => `${kind} ${i}, ${width} ס"מ`,
+    allOuter: 'כל קירות החוץ',
+    /** R50: the highlight of the outer walls step, named in the legend. */
+    outerLegend: 'קירות החוץ שננעלים ב"אישור"',
+    outerHow: 'בדקו שקירות החוץ המסומנים נכונים, ואשרו.',
+    confirmed: 'אושר',
+    notConfirmed: 'לא אושר',
+    /** R49: an opening that holds nothing back: not beside a room of the apartment. */
+    notNeeded: 'מחוץ לדירה: אין צורך לאשר.',
+    suggest: 'הצעה: קבוע',
+    acceptOne: 'קבלת ההצעה',
+    acceptAll: (n: number) => `קבלת כל ההצעות (${n})`,
+    suggestWhy: 'קירות עם חלון, קירות על גבול הדירה ועמודים מוצעים כקבועים.',
+    review: 'לבדיקה',
+    reviewed: 'נבדק',
+    colours: 'צבעי השרטוט של הקבלן',
+    colourMeans: (hex: string) => `מה מסמן הצבע ${hex}`,
+    colourExample: 'למשל: טיח',
   },
   /** Why the model refused an action, for the reasons the existing state can give. */
   reason: {

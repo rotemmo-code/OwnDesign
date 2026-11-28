@@ -17,6 +17,12 @@ export function wheelFactor({ deltaMode, deltaY }: { deltaMode: number; deltaY: 
 }
 
 export const whole = (page: Page): Box => [0, 0, page.widthPt, page.heightPt];
+/** The view that shows a box (an item to check, R42): half the box's larger side around it, at least a 16th of the page wide. */
+export function framed([x, y, width, height]: Box, page: Page): Box {
+  const pad = Math.max(width, height) / 2;
+  const [w, h] = [width + 2 * pad, height + 2 * pad].map(v => Math.min(FURTHEST * page.widthPt, Math.max(page.widthPt / 16, v)));
+  return [x + width / 2 - w / 2, y + height / 2 - h / 2, w, h];
+}
 export const moved = ([x, y, width, height]: Box, [dx, dy]: Vec): Box => [x + dx, y + dy, width, height];
 
 /** The point at stays where it is on the screen. */

@@ -114,3 +114,29 @@ header .project-name input { inline-size: 14em; }
 .finishes input:disabled { opacity: 0.5; }
 .areas { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
 .areas > span { inline-size: 100%; }
+
+/* Task 11c: the check before approval. A wall for review is dashed around; the outer walls stand out in their step. */
+.review { fill: none; stroke: var(--c-ink); stroke-width: 2px; stroke-dasharray: 4 3; vector-effect: non-scaling-stroke; pointer-events: none; }
+.highlight { fill: none; stroke: var(--c-dimension); stroke-width: 6px; stroke-opacity: 0.6; vector-effect: non-scaling-stroke; pointer-events: none; }
+.panel-tabs { margin-block-end: 8px; }
+.check h3 { font-size: inherit; margin: 0 0 4px; }
+.check > section { margin-block-end: 16px; }
+.check ul { list-style: none; margin: 0; padding: 0; }
+.check li { margin-block-end: 8px; }
+.check .row, .check [role='group'] { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin-block-start: 4px; }
+.check [role='group'] > span { inline-size: 100%; }
+.check li label { display: inline; }
+.legend details { margin-block-start: 8px; }
+.legend details label { display: block; }
+.legend details input { inline-size: 10em; }
+/* S1: the legend in both tabs, always in view under the panel's text, which scrolls alone; the legend never covers it. */
+.panel:has(> .editor-panel) { overflow: hidden; display: flex; flex-direction: column; }
+.editor-panel { flex: 1; min-block-size: 0; display: flex; flex-direction: column; margin: 0; }
+.editor-panel > .panel-body { flex: 1 1 auto; min-block-size: 0; overflow: auto; }
+.editor-panel > .panel-body > * { margin-block-end: 8px; }
+.editor-panel > .legend { position: static; flex: 0 0 auto; max-block-size: 45%; overflow: auto; margin: 0; }
+@media (max-width: 700px) {
+  .panel:has(> .editor-panel) { overflow: visible; display: block; }
+  .editor-panel { display: block; }
+  .editor-panel > .panel-body, .editor-panel > .legend { overflow: visible; max-block-size: none; }
+}

@@ -3,7 +3,7 @@ import { copy } from '../copy';
 import type { ExtractedPage } from '../pdf/extract';
 import type { Box, Picture } from '../pdf/render';
 import type { Vec } from '../shared';
-import { layout, moved, type Size, visiblePart, wheelFactor, whole, zoomed } from './view';
+import { framed, layout, moved, type Size, visiblePart, wheelFactor, whole, zoomed } from './view';
 
 const NOTCH = 1.25; // one zoom step
 const REST_MS = 120; // without a change before the picture is drawn again
@@ -32,10 +32,12 @@ type Props = {
   strength?: number;
   /** View points per CSS pixel, whenever the view or the frame changes. */
   onScale?(ptPerPx: number): void;
+  /** A new turn fits the view to the box, with a margin (an item shown from the check list, R42). */
+  focus?: { box: Box; turn: number } | null;
 };
 
 /** The page, and over it whatever is drawn in view points. */
-export function Canvas({ page, pageNo, picture, draw, onPick, onHover, children, strength = 100, onScale }: Props) {
+export function Canvas({ page, pageNo, picture, draw, onPick, onHover, children, strength = 100, onScale, focus }: Props) {
   const frame = useRef<HTMLDivElement>(null);
   const svg = useRef<SVGSVGElement>(null);
   const [view, setView] = useState<Box>(() => whole(page));
@@ -62,6 +64,14 @@ export function Canvas({ page, pageNo, picture, draw, onPick, onHover, children,
   const move = (dx: number, dy: number) => setView(old => moved(old, [dx, dy]));
   /** The one whole-page view, fitted and centred: the "איפוס תצוגה" button and the key 0 (owner R15). */
   const fit = () => setView(whole(page));
+  // the same view as zoom and "איפוס תצוגה" set: what a tool holds half done is the tool's, and stays. Each turn is used
+  // once: the same turn coming back (after a recalibration, say) does not move the view again (M2).
+  const used = useRef(0);
+  useLayoutEffect(() => {
+    if (!focus || focus.turn === used.current) return;
+    used.current = focus.turn;
+    setView(framed(focus.box, page));
+  }, [focus?.turn]);
 
   useLayoutEffect(() => {
     const measure = () => {
