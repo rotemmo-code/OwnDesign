@@ -23,10 +23,21 @@ async function bothRooms(page: Page) {
   const right = await pick(page, [4700, 2200], 'room-details');
   await right.getByLabel(e.inApartment).check();
 }
-const inside = async (page: Page, item: Locator) => {
-  const [a, b] = [(await item.boundingBox())!, (await canvas(page).boundingBox())!];
-  return a.x >= b.x && a.y >= b.y && a.x + a.width <= b.x + b.width && a.y + a.height <= b.y + b.height;
-};
+/** The view is fitted to the item: its box lies inside the viewBox, which is smaller than the page and not much larger than the box. */
+async function fits(page: Page, item: Locator) {
+  const { box, view } = await item.evaluate(el => {
+    const svg = (el as unknown as SVGGraphicsElement).ownerSVGElement!;
+    const m = svg.getScreenCTM()!.inverse();
+    const r = el.getBoundingClientRect();
+    const [a, b] = [new DOMPoint(r.left, r.top).matrixTransform(m), new DOMPoint(r.right, r.bottom).matrixTransform(m)];
+    return { box: [a.x, a.y, b.x, b.y], view: svg.getAttribute('viewBox')!.split(' ').map(Number) };
+  });
+  const [x, y, w, h] = view;
+  expect(box[0] >= x - 0.5 && box[1] >= y - 0.5 && box[2] <= x + w + 0.5 && box[3] <= y + h + 0.5, `${box} in ${view}`).toBe(true);
+  expect(w).toBeLessThan(842);
+  const side = Math.max(box[2] - box[0], box[3] - box[1]);
+  expect(Math.max(w, h), `${box} in ${view}`).toBeLessThanOrEqual(Math.max(2 * side, 842 / 16) + 1); // framed: half its side around it
+}
 
 test('the check list shows six steps in order and counts confirmed items; the count is read when it changes', async ({ page }) => {
   await start(page);
@@ -162,12 +173,56 @@ test('הצגה selects the item and brings it into view; the zoom follows; a hal
   await button(items(page, 'doors').first(), e.show).click();
   await expect(page.locator('.selected-opening')).toHaveCount(1);
   await expect(page.getByTestId('zoom')).not.toHaveText(`${e.zoom} 100%`);
-  expect(await inside(page, opening(page).first())).toBe(true);
+  await fits(page, opening(page).first());
   await clickMm(page, [2000, 3000]); // the second end: the wall begun before הצגה is drawn
   expect(await wallBoxes(page)).toHaveLength(6);
   await page.getByRole('button', { name: copy.fit }).click();
   await expect(canvas(page)).toHaveAttribute('viewBox', '0 0 842 595');
   await expect(page.getByTestId('zoom')).toHaveText(`${e.zoom} 100%`);
+});
+
+test('הצגה of a room and of the outer walls fits the view to them; a focus is used once: a recalibration does not bring it back (M2, M6)', async ({ page }) => {
+  await start(page);
+  await twoRooms(page);
+  await openCheck(page);
+  await button(items(page, 'rooms').first(), e.show).click();
+  await expect(page.locator('.selected-room')).toHaveCount(1);
+  await fits(page, page.locator('.selected-room path').first());
+  await expect(items(page, 'envelope').first()).toBeVisible();
+  await button(items(page, 'envelope').first(), e.show).click();
+  const lit = page.locator('[data-highlight]');
+  // the view holds every stretch: the box of them all is the one fitted
+  const all = await lit.evaluateAll(list => {
+    const svg = (list[0] as SVGGraphicsElement).ownerSVGElement!;
+    const m = svg.getScreenCTM()!.inverse();
+    const rs = list.map(p => p.getBoundingClientRect());
+    const a = new DOMPoint(Math.min(...rs.map(r => r.left)), Math.min(...rs.map(r => r.top))).matrixTransform(m);
+    const b = new DOMPoint(Math.max(...rs.map(r => r.right)), Math.max(...rs.map(r => r.bottom))).matrixTransform(m);
+    return { box: [a.x, a.y, b.x, b.y], view: svg.getAttribute('viewBox')!.split(' ').map(Number) };
+  });
+  const [x, y, w, h] = all.view;
+  expect(all.box[0] >= x && all.box[1] >= y && all.box[2] <= x + w && all.box[3] <= y + h, `${all.box} in ${all.view}`).toBe(true);
+  expect(w).toBeLessThan(842);
+  // then the whole page, then a recalibration: the page stays whole
+  await page.getByRole('button', { name: copy.fit }).click();
+  await expect(canvas(page)).toHaveAttribute('viewBox', '0 0 842 595');
+  await tab(page, e.detailsTab).click(); // the measure tool's panel, with its כיול מחדש
+  await tool(page, copy.measure.title);
+  await page.getByRole('button', { name: copy.measure.again }).click();
+  await page.getByRole('button', { name: copy.calibrate.go(50) }).click();
+  await expect(page.getByRole('tab', { name: e.existing })).toBeVisible();
+  await expect(canvas(page)).toHaveAttribute('viewBox', '0 0 842 595');
+});
+
+test('pressing אין ממ"ד again adds no step: one undo takes the answer back (M3)', async ({ page }) => {
+  await start(page);
+  await twoRooms(page);
+  await openCheck(page);
+  await button(step(page, 'mamad'), e.noMamad).click();
+  await button(step(page, 'mamad'), e.noMamad).click();
+  await expect(page.getByTestId('mamad-answer')).toHaveText(e.noMamad);
+  await page.getByRole('button', { name: e.undo }).click();
+  await expect(page.getByTestId('mamad-answer')).toHaveText('');
 });
 
 test('released items are drawn dashed and listed unconfirmed; אישור confirms one, אישור הכול all of a step', async ({ page }) => {
@@ -387,7 +442,7 @@ function draft(): Project {
   const set = (id: string, o: Partial<Opening>) => s.openings.find(x => x.id === id) && Object.assign(s.openings.find(x => x.id === id)!, o);
   set('door', { confirmed: false, review: true });
   set('window', { confirmed: true, review: true }); // locked, confirmed, for review: אישור הכול must leave it alone
-  set('entry', { confirmed: false });
+  set('entry', { confirmed: false, review: true });
   s.openings.push({ ...s.openings.find(x => x.id === 'window')!, id: 'window-2', offset: 3600, width: 1000, confirmed: false, review: false });
   s.walls.find(w => w.id === 'part')!.review = true;
   delete p.envelope; // as a draft arrives: locked and not confirmed
@@ -427,6 +482,12 @@ test('unconfirmed and review items from a draft are listed, drawn dashed with th
   await expect(windows.nth(0).getByTestId('status')).toHaveText(e.confirmed);
   await expect(button(windows.nth(0), e.fix)).toHaveCount(1);
   await expect(page.locator('[data-opening="window"]')).toHaveAttribute('data-locked', 'true');
+  // its אישור confirms the entry door and, by the model's rule, takes its לבדיקה away too (M1)
+  const entryRow = items(page, 'entry').first();
+  await expect(entryRow).toContainText(e.review);
+  await button(entryRow, e.confirm).click();
+  await expect(entryRow.getByTestId('status')).toHaveText(e.confirmed);
+  await expect(entryRow).not.toContainText(e.review);
   // the outer walls of a draft are locked and not confirmed
   const outer = items(page, 'envelope').first();
   await expect(outer.getByTestId('status')).toHaveText(e.notConfirmed);

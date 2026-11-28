@@ -58,12 +58,16 @@ function List({ c, onFix, onShow, stretches }: Props) {
   const marked = s.rooms.find(r => r.isMamad);
   const progress = checkProgress(p);
   const walls = new Map(s.walls.map(w => [w.id, w]));
+  // the gap, and a door's swing too (as OpeningShape draws it)
   const openingBox = (o: Opening) => {
     const w = walls.get(o.wallId)!;
-    return boxOf(corners(alongWall(w, o.offset), alongWall(w, o.offset + o.width), w.thickness), c.k);
+    const [a, b] = [alongWall(w, o.offset), alongWall(w, o.offset + o.width)];
+    const n = { x: -(b.y - a.y), y: b.x - a.x }; // the width long, across the wall
+    const swing = o.kind === 'door' || o.kind === 'entry' ? [{ x: a.x + n.x, y: a.y + n.y }, { x: b.x + n.x, y: b.y + n.y }] : [];
+    return boxOf([...corners(a, b, w.thickness), ...swing], c.k);
   };
   // while a room is the mamad its mark does not move (R18); after its "תיקון" a choice is the answer (R19, R39)
-  const choose = (room: Id | 'none') => (marked ? marked.id !== room && c.say(e.mamadTaken) : c.run({ type: 'setMamad', room }));
+  const choose = (room: Id | 'none') => (marked ? marked.id !== room && c.say(e.mamadTaken) : p.mamad !== room && c.run({ type: 'setMamad', room })); // the answer again changes nothing (M3)
   const openings = (kinds: Opening['kind'][], empty: string) => {
     const list = s.openings.filter(o => kinds.includes(o.kind));
     const open = list.filter(o => !done(o)).map(o => o.id);

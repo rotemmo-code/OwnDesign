@@ -64,8 +64,14 @@ export function Canvas({ page, pageNo, picture, draw, onPick, onHover, children,
   const move = (dx: number, dy: number) => setView(old => moved(old, [dx, dy]));
   /** The one whole-page view, fitted and centred: the "איפוס תצוגה" button and the key 0 (owner R15). */
   const fit = () => setView(whole(page));
-  // the same view as zoom and "איפוס תצוגה" set: what a tool holds half done is the tool's, and stays
-  useEffect(() => void (focus && setView(framed(focus.box, page))), [focus?.turn]);
+  // the same view as zoom and "איפוס תצוגה" set: what a tool holds half done is the tool's, and stays. Each turn is used
+  // once: the same turn coming back (after a recalibration, say) does not move the view again (M2).
+  const used = useRef(0);
+  useLayoutEffect(() => {
+    if (!focus || focus.turn === used.current) return;
+    used.current = focus.turn;
+    setView(framed(focus.box, page));
+  }, [focus?.turn]);
 
   useLayoutEffect(() => {
     const measure = () => {
