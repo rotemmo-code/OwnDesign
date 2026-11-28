@@ -1,0 +1,84 @@
+import { expect, test } from '@playwright/test';
+import type { Project, Wall } from '../../src/model/types';
+import { boxProject } from '../fixtures/box';
+import { e, onScreen, watch } from './editorKit';
+import { serveProbe } from './probe';
+
+// A draft as large as detection may bring: 500 walls (owner R30: an edit may take seconds there; a frame may not).
+watch();
+
+const CELL = 650;
+function large(): Project {
+  const walls: Wall[] = [];
+  const wall = (ax: number, ay: number, bx: number, by: number, thickness: number): Wall => ({
+    id: `w${walls.length}`, a: { x: ax, y: ay }, b: { x: bx, y: by }, thickness, finishA: null, finishB: null, source: 'manual', review: false,
+  });
+  for (let i = 0; i <= 15; i++)
+    for (let j = 0; j < 15; j++) {
+      const t = i === 0 || i === 15 ? 200 : 100;
+      walls.push(wall(500 + j * CELL, 500 + i * CELL, 500 + (j + 1) * CELL, 500 + i * CELL, t));
+      walls.push(wall(500 + i * CELL, 500 + j * CELL, 500 + i * CELL, 500 + (j + 1) * CELL, t));
+    }
+  for (let i = 0; walls.length < 500; i++) walls.push(wall(500 + i * 600, 10200, 800 + i * 600, 10200, 100));
+  const p = boxProject();
+  return { ...p, envelope: 'released', existing: { walls, openings: [], separators: [], rooms: [] } };
+}
+
+test('500 walls: a preview frame stays under 50 ms', async ({ page }) => {
+  test.setTimeout(240_000);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await serveProbe(page);
+  const project = large();
+  expect(project.existing.walls).toHaveLength(500);
+  await page.evaluate(async p => (await import(/* @vite-ignore */ '/probe.js' as string)).mount(p), project);
+  const k = project.calibration.mmPerPt;
+  const at = async (mm: [number, number]) => onScreen(page, [mm[0] / k, mm[1] / k]);
+  await page.getByRole('group', { name: e.tools }).getByRole('button', { name: e.select, exact: true }).click();
+  await expect(page.locator('[data-wall]')).toHaveCount(500, { timeout: 60_000 });
+  const middle = 500 + 7 * CELL;
+  await page.mouse.click(...(await at([middle + CELL / 2, middle]))); // a wall in the middle of the grid
+  await expect(page.getByTestId('wall-details')).toBeVisible({ timeout: 60_000 });
+  await page.mouse.click(...(await at([middle + CELL, middle]))); // its end
+  await expect(page.getByTestId('step')).toHaveText(e.moveEnd);
+  const from = await at([middle + CELL, middle]);
+  await page.evaluate(() => {
+    const w = window as unknown as { frames_: number[] };
+    w.frames_ = [];
+    let last = performance.now();
+    const loop = (t: number) => {
+      w.frames_.push(t - last);
+      last = t;
+      if (w.frames_.length < 600) requestAnimationFrame(loop);
+    };
+    requestAnimationFrame(loop);
+  });
+  for (let i = 0; i < 60; i++) await page.mouse.move(from[0] + i, from[1] + i / 2);
+  await expect(page.getByTestId('wall-preview')).toBeVisible();
+  const frames: number[] = await page.evaluate(() => (window as unknown as { frames_: number[] }).frames_.slice(2));
+  console.log(`500 walls: ${frames.length} frames, the slowest ${Math.max(...frames).toFixed(1)} ms`);
+  expect(Math.max(...frames)).toBeLessThan(50);
+});
+
+test('500 walls: the walls are not drawn again while a held end moves (their memo holds)', async ({ page }) => {
+  test.setTimeout(240_000);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await serveProbe(page);
+  const project = large();
+  await page.evaluate(async p => (await import(/* @vite-ignore */ '/probe.js' as string)).mount(p), project);
+  const k = project.calibration.mmPerPt;
+  const at = async (mm: [number, number]) => onScreen(page, [mm[0] / k, mm[1] / k]);
+  await page.getByRole('group', { name: e.tools }).getByRole('button', { name: e.select, exact: true }).click();
+  await expect(page.locator('[data-wall]')).toHaveCount(500, { timeout: 60_000 });
+  const middle = 500 + 7 * CELL;
+  await page.mouse.click(...(await at([middle + CELL / 2, middle])));
+  await expect(page.getByTestId('wall-details')).toBeVisible({ timeout: 60_000 });
+  await page.mouse.click(...(await at([middle + CELL, middle])));
+  await expect(page.getByTestId('step')).toHaveText(e.moveEnd);
+  const renders = () => page.evaluate(() => (globalThis as unknown as { wallRenders: number }).wallRenders);
+  const before = await renders();
+  expect(before).toBeGreaterThan(0);
+  const from = await at([middle + CELL, middle]);
+  for (let i = 0; i < 30; i++) await page.mouse.move(from[0] + i, from[1] + i / 2);
+  await expect(page.getByTestId('wall-preview')).toBeVisible();
+  expect(await renders()).toBe(before);
+});

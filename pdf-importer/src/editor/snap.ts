@@ -322,9 +322,19 @@ export function holdAxis(from: Vec, to: Vec): Vec {
   return to;
 }
 
-/** What a click of the select or delete tool takes: a wall (the nearest whose body is within r), else the room under it. */
-export type Hit = { kind: 'wall' | 'room'; id: string } | null;
+/**
+ * What a click of the select or delete tool takes, in this order: a handle of the selected item (a wall's ends, an
+ * opening's edges), an opening, a wall (the nearest whose body is within r), a separator, else the room under it.
+ */
+export type Hit =
+  | { kind: 'end'; wall: string; end: 'a' | 'b' }
+  | { kind: 'edge'; opening: string; edge: 'start' | 'end' }
+  | { kind: 'opening' | 'wall' | 'separator' | 'room'; id: string }
+  | null;
 type Mm = { x: number; y: number };
+type WallLike = { id: string; a: Mm; b: Mm; thickness: number; status?: string };
+type OpeningLike = { id: string; wallId: string; offset: number; width: number; status?: string };
+type Plan = { walls: WallLike[]; openings?: OpeningLike[]; separators?: { id: string; a: Mm; b: Mm }[]; rooms: { id: string; boundary: Mm[]; holes: Mm[][] }[] };
 const toSegment = (p: Mm, a: Mm, b: Mm) => {
   const l2 = (b.x - a.x) ** 2 + (b.y - a.y) ** 2;
   const t = l2 ? Math.max(0, Math.min(1, ((p.x - a.x) * (b.x - a.x) + (p.y - a.y) * (b.y - a.y)) / l2)) : 0;
@@ -336,19 +346,102 @@ const inRing = (ring: Mm[], p: Mm) => {
     if (ring[i].y > p.y !== ring[j].y > p.y && p.x < ((ring[j].x - ring[i].x) * (p.y - ring[i].y)) / (ring[j].y - ring[i].y) + ring[i].x) inside = !inside;
   return inside;
 };
+/** The point of the wall's centre line t mm from a. */
+export const alongWall = (w: { a: Mm; b: Mm }, t: number): Mm => {
+  const l = Math.hypot(w.b.x - w.a.x, w.b.y - w.a.y);
+  return { x: w.a.x + ((w.b.x - w.a.x) * t) / l, y: w.a.y + ((w.b.y - w.a.y) * t) / l };
+};
+/** How far along the wall's centre line, from a, the foot of p falls; not held within the wall. */
+export const offsetOn = (w: { a: Mm; b: Mm }, p: Mm): number => {
+  const l = Math.hypot(w.b.x - w.a.x, w.b.y - w.a.y);
+  return ((p.x - w.a.x) * (w.b.x - w.a.x) + (p.y - w.a.y) * (w.b.y - w.a.y)) / l;
+};
 /** In mm. A room's hole is not the room. */
-export function pickAt(p: Mm, s: { walls: { id: string; a: Mm; b: Mm; thickness: number; status?: string }[]; rooms: { id: string; boundary: Mm[]; holes: Mm[][] }[] }, radiusMm: number): Hit {
+export function pickAt(p: Mm, s: Plan, radiusMm: number, selected: { kind: string; id: string } | null = null): Hit {
+  const live = s.walls.filter(w => w.status !== 'removed');
+  const near = (q: Mm) => Math.hypot(q.x - p.x, q.y - p.y) <= radiusMm;
+  const wallOf = new Map(live.map(w => [w.id, w]));
+  if (selected?.kind === 'wall') {
+    const w = wallOf.get(selected.id);
+    const end = w && (['a', 'b'] as const).filter(e => near(w[e])).sort((x, y) => Math.hypot(w[x].x - p.x, w[x].y - p.y) - Math.hypot(w[y].x - p.x, w[y].y - p.y))[0];
+    if (w && end) return { kind: 'end', wall: w.id, end };
+  }
+  if (selected?.kind === 'opening') {
+    const o = s.openings?.find(x => x.id === selected.id);
+    const w = o && wallOf.get(o.wallId);
+    if (o && w) {
+      const [start, end] = [alongWall(w, o.offset), alongWall(w, o.offset + o.width)];
+      const [ds, de] = [Math.hypot(start.x - p.x, start.y - p.y), Math.hypot(end.x - p.x, end.y - p.y)];
+      if (Math.min(ds, de) <= radiusMm) return { kind: 'edge', opening: o.id, edge: ds <= de ? 'start' : 'end' };
+    }
+  }
   let best: Hit = null;
   let bestD = Infinity;
-  for (const w of s.walls) {
-    if (w.status === 'removed') continue;
+  for (const o of s.openings ?? []) {
+    const w = wallOf.get(o.wallId);
+    if (!w || o.status === 'removed') continue;
+    const d = toSegment(p, alongWall(w, o.offset), alongWall(w, o.offset + o.width)) - w.thickness / 2;
+    if (d <= radiusMm && d < bestD) [best, bestD] = [{ kind: 'opening', id: o.id }, d];
+  }
+  if (best) return best;
+  for (const w of live) {
     const d = toSegment(p, w.a, w.b) - w.thickness / 2;
     if (d <= radiusMm && d < bestD) [best, bestD] = [{ kind: 'wall', id: w.id }, d];
+  }
+  if (best) return best;
+  for (const x of s.separators ?? []) {
+    const d = toSegment(p, x.a, x.b);
+    if (d <= radiusMm && d < bestD) [best, bestD] = [{ kind: 'separator', id: x.id }, d];
   }
   if (best) return best;
   const room = s.rooms.find(r => inRing(r.boundary, p) && !r.holes.some(h => inRing(h, p)));
   return room ? { kind: 'room', id: room.id } : null;
 }
 
+/**
+ * The nearest point on a face of a wall already drawn (the edges of the walls' outlines), within r; null when there is
+ * none. For the separator tool: a separator runs from face to face, never from a line of the drawing (owner R24).
+ */
+export function snapFace(p: Mm, outlines: Iterable<Mm[]>, radiusMm: number): Mm | null {
+  let best: Mm | null = null;
+  let bestD = radiusMm;
+  for (const ring of outlines)
+    ring.forEach((a, i) => {
+      const b = ring[(i + 1) % ring.length];
+      const l2 = (b.x - a.x) ** 2 + (b.y - a.y) ** 2;
+      const t = l2 ? Math.max(0, Math.min(1, ((p.x - a.x) * (b.x - a.x) + (p.y - a.y) * (b.y - a.y)) / l2)) : 0;
+      const q = { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
+      const d = Math.hypot(q.x - p.x, q.y - p.y);
+      if (d <= bestD) [best, bestD] = [q, d];
+    });
+  return best;
+}
+
 /** Where the second click puts the wall's end: a snapped point as it is, a free point held to an axis near it. */
 export const secondEnd = (from: Vec, snap: CentreSnap): Vec => (snap.to ? snap.at : holdAxis(from, snap.at));
+
+/** The wall whose body is nearest to p, within r (openings and separators aside); null when none is. */
+export function wallAt(p: Mm, walls: WallLike[], radiusMm: number): string | null {
+  let best: string | null = null;
+  let bestD = Infinity;
+  for (const w of walls) {
+    if (w.status === 'removed') continue;
+    const d = toSegment(p, w.a, w.b) - w.thickness / 2;
+    if (d <= radiusMm && d < bestD) [best, bestD] = [w.id, d];
+  }
+  return best;
+}
+
+/**
+ * Where along its wall a click puts an opening's edge, in mm from a, within the wall (owner R34): the foot of the click
+ * on the centre line, or the foot of the nearest corner of the drawing's filled shapes across the wall's thickness, when
+ * that corner's foot lies within the snap radius of the click's (the drawn gap's ends). at and radiusPt in view points.
+ */
+export function openingFoot(w: Pick<WallLike, 'a' | 'b' | 'thickness'>, at: Vec, fills: SnapIndex, radiusPt: number, mmPerPt: number): number {
+  const mm = (q: Vec): Mm => ({ x: q[0] * mmPerPt, y: q[1] * mmPerPt });
+  const t = offsetOn(w, mm(at));
+  const corner = snapPoint(at, fills, radiusPt + w.thickness / 2 / mmPerPt);
+  const u = corner.to === 'end' || corner.to === 'cross' ? offsetOn(w, mm(corner.at)) : t;
+  const length = Math.hypot(w.b.x - w.a.x, w.b.y - w.a.y);
+  return Math.max(0, Math.min(length, Math.abs(u - t) <= radiusPt * mmPerPt ? u : t));
+}
