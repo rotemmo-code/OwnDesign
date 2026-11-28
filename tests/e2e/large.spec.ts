@@ -110,6 +110,8 @@ test('500 walls with the check tab open: the tab opens in time, a preview frame 
     return performance.now() - t0;
   }, e.checkTab);
   console.log(`500 walls: the check tab opened in ${opened.toFixed(1)} ms`);
+  // what the tab asks for after its paint (the outer stretches, R50) is done before the preview frames are timed
+  await page.evaluate(() => new Promise(r => requestAnimationFrame(() => setTimeout(r, 100))));
   const renders = () => page.evaluate(() => (globalThis as unknown as { wallRenders: number }).wallRenders);
   const before = await renders();
   const from = await at([middle + CELL, middle]);
