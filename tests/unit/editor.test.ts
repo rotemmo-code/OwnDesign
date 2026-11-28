@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest';
 import { copy } from '../../src/copy';
-import { createStore, newProject, rescaled, roomEvents } from '../../src/editor/useProject';
+import { createStore, newProject, releasedAfter, rescaled, roomEvents } from '../../src/editor/useProject';
 import { apply } from '../../src/model/apply';
 import { ProjectSchema } from '../../src/model/schema';
 import type { Action, Project } from '../../src/model/types';
@@ -154,13 +154,13 @@ it('released: the mamad whose mark was taken back, read from the history; nothin
   store.dispatch({ type: 'setMamad', room: 'room-b' });
   expect(store.released).toBeNull();
   store.dispatch({ type: 'setMamad', room: null }); // "תיקון"
-  expect(store.released).toEqual({ id: 'room-b', name: 'B' });
+  expect(store.released).toEqual({ id: 'room-b', name: 'B', fix: true });
   store.dispatch({ type: 'setName', name: 'meanwhile' });
-  expect(store.released).toEqual({ id: 'room-b', name: 'B' });
+  expect(store.released).toEqual({ id: 'room-b', name: 'B', fix: true });
   store.dispatch({ type: 'setMamad', room: 'room-b' }); // "אישור"
   expect(store.released).toBeNull();
   store.undo();
-  expect(store.released).toEqual({ id: 'room-b', name: 'B' });
+  expect(store.released).toEqual({ id: 'room-b', name: 'B', fix: true });
   store.undo();
   store.undo();
   expect(store.released).toBeNull(); // the mark itself
@@ -168,7 +168,36 @@ it('released: the mamad whose mark was taken back, read from the history; nothin
   expect(store.released).toBeNull(); // before it: nothing was ever released
   store.redo();
   store.redo();
-  expect(store.released).toEqual({ id: 'room-b', name: 'B' });
+  expect(store.released).toEqual({ id: 'room-b', name: 'B', fix: true });
   store.load(open());
   expect(store.released).toBeNull();
+});
+
+it('released: the answer אין ממ"ד after a release is an answer, not a release (R39); undo brings the release back', () => {
+  const store = createStore();
+  store.load(open());
+  store.dispatch({ type: 'setMamad', room: 'room-b' });
+  store.dispatch({ type: 'setMamad', room: null }); // "תיקון"
+  expect(store.released).toEqual({ id: 'room-b', name: 'B', fix: true });
+  store.dispatch({ type: 'setMamad', room: 'none' });
+  expect(store.project!.mamad).toBe('none');
+  expect(store.released).toBeNull();
+  store.undo();
+  expect(store.released).toEqual({ id: 'room-b', name: 'B', fix: true });
+  store.load(open());
+  store.dispatch({ type: 'setMamad', room: 'none' }); // answered with no release before it
+  expect(store.released).toBeNull();
+});
+
+it('releasedAfter: a mark the model clears (a merge) is no release by "תיקון"; a mark kept or an answer given ends a release', () => {
+  const marked = (p: Project, id: string | null): Project => ({ ...p, mamad: id, existing: { ...p.existing, rooms: p.existing.rooms.map(r => ({ ...r, isMamad: r.id === id })) } });
+  const p = open();
+  const fix = { type: 'setMamad', room: null } as const;
+  const other = { type: 'x.deleteWall', id: 'part' } as const;
+  expect(releasedAfter(marked(p, 'room-b'), marked(p, null), fix, null)).toEqual({ id: 'room-b', name: 'B', fix: true });
+  expect(releasedAfter(marked(p, 'room-b'), marked(p, null), other, null)).toEqual({ id: 'room-b', name: 'B', fix: false });
+  const was = { id: 'room-b', name: 'B', fix: true };
+  expect(releasedAfter(marked(p, null), marked(p, null), other, was)).toBe(was); // carried while nothing is marked
+  expect(releasedAfter(marked(p, null), marked(p, 'room-a'), { type: 'setMamad', room: 'room-a' }, was)).toBeNull();
+  expect(releasedAfter(marked(p, null), { ...marked(p, null), mamad: 'none' }, { type: 'setMamad', room: 'none' }, was)).toBeNull();
 });

@@ -136,7 +136,8 @@ export function useEditor({ store, page, plaster, measure, ptPerPx }: { store: S
         message={message}
         question={question}
         onQuestionDone={() => setQuestion(null)}
-        mamadWas={released && { id: released.id, name: released.name || e.unnamed }}
+        // by its name now: renamed while unmarked, the room keeps its new name in the row
+        mamadWas={released && { ...released, name: (project.existing.rooms.find(r => r.id === released.id)?.name ?? released.name) || e.unnamed }}
         onFix={fix}
         onConfirmMamad={confirmMamad}
         tool={active.panel}

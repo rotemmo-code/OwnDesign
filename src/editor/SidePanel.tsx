@@ -289,7 +289,7 @@ type Props = {
   question: Question | null;
   onQuestionDone(): void;
   /** The mamad, while its mark was taken back to correct its walls. */
-  mamadWas: { id: Id; name: string } | null;
+  mamadWas: { id: Id; name: string; fix: boolean } | null;
   onFix(lock: Lock): void;
   onConfirmMamad(): void;
   tool: ReactNode;
@@ -325,8 +325,15 @@ export function SidePanel({ c, selected, message, question, onQuestionDone, mama
       )}
       {/* while the mark is taken back: after "אישור", or an undo of the release, no room is left unmarked */}
       {mamadWas && !c.project.existing.rooms.some(r => r.isMamad) && (
-        <p className="lock">
-          {e.mamadOpen(mamadWas.name)} <button type="button" onClick={onConfirmMamad}>{e.confirm}</button>
+        <p className="lock" data-testid="mamad-row">
+          {/* a mark the model cleared (its room merged) was no "תיקון": it is marked again by hand */}
+          {mamadWas.fix ? (
+            <>
+              {e.mamadOpen(mamadWas.name)} <button type="button" onClick={onConfirmMamad}>{e.confirm}</button>
+            </>
+          ) : (
+            e.mamadChanged
+          )}
         </p>
       )}
       {tool}
