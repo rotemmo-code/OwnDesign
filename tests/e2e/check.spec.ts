@@ -308,6 +308,28 @@ test('the opening tool: a first click on no wall says so in words of its own, no
   await expect(page.getByTestId('step')).toHaveText(e.openingFirst);
 });
 
+test('קבלת כל ההצעות is one step of the history: one ביטול פעולה and no wall is קבוע, one ביצוע שוב and all are (R47)', async ({ page }) => {
+  await start(page);
+  await bothRooms(page);
+  await drawOpening(page, e.window, [3250, 2600], [3250, 3400]);
+  const legend = page.getByRole('region', { name: e.legend });
+  await button(legend, e.acceptAll(5)).click();
+  await expect(legend.getByRole('button', { name: /קבלת כל ההצעות/ })).toHaveCount(0);
+  const walls: [number, number][] = [[3000, 100], [6300, 3000], [3000, 4300], [100, 3000], [3250, 1600]];
+  const classes = async () => {
+    const out: string[] = [];
+    for (const at of walls) {
+      const w = await pick(page, at, 'wall-details');
+      out.push((await w.getByRole('group', { name: e.classLabel }).getByRole('button', { pressed: true }).textContent()) ?? '');
+    }
+    return out;
+  };
+  await page.getByRole('button', { name: e.undo }).click();
+  expect(await classes()).toEqual(Array(5).fill(e.classes.unknown));
+  await page.getByRole('button', { name: e.redo }).click();
+  expect(await classes()).toEqual(Array(5).fill(e.classes.fixed));
+});
+
 // ---- drafts, which drawing by hand cannot make: through the probe ----
 
 function draft(): Project {

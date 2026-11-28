@@ -381,9 +381,7 @@ function Details({ c, selected, onFix, tool, plaster, finished, net, onNet, colo
     ...(s.separators.length ? (['separator'] as const) : []),
     ...(anyFinish ? (['finish'] as const) : []),
   ];
-  const acceptAll = () => {
-    for (const wallId of suggested) c.run({ type: 'classify', wallId, cls: 'fixed' });
-  };
+  const acceptAll = () => c.runAll([...suggested].map(wallId => ({ type: 'classify', wallId, cls: 'fixed' }) as const));
   return (
     <>
       {tool}

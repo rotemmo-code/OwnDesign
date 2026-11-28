@@ -12,6 +12,11 @@ export type Store = {
   project: Project | null;
   /** The only caller of apply. A refused action changes nothing. */
   dispatch(a: Action): Result;
+  /**
+   * Several actions as one step of the history (one undo, one redo), each applied to the result of the one before; a
+   * refusal of any changes nothing. Its notice: the last one given. An empty list is refused.
+   */
+  dispatchAll(actions: Action[]): Result;
   undo(): void;
   redo(): void;
   canUndo: boolean;
@@ -59,6 +64,22 @@ export function createStore(): ProjectStore {
         set(r.project);
       }
       return r;
+    },
+    dispatchAll(actions: Action[]): Result {
+      const start = snapshot.project;
+      if (!start || !actions.length) return { ok: false, reason: 'invalid-action' };
+      let [p, released, notice] = [start, releasedOf.get(start) ?? null, undefined as Notice | undefined];
+      for (const a of actions) {
+        const r = apply(p, a);
+        if (!r.ok) return r;
+        [released, notice] = [releasedAfter(p, r.project, a, released), r.notice ?? notice];
+        p = r.project;
+      }
+      if (p === start) return { ok: true, project: p };
+      releasedOf.set(p, released);
+      history.push(p);
+      set(p);
+      return notice === undefined ? { ok: true, project: p } : { ok: true, project: p, notice };
     },
     undo() {
       const p = history.undo();

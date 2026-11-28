@@ -19,6 +19,8 @@ export type EditorCtx = {
   derived: Derived;
   /** Through the store; a refusal is said in the message line. */
   run(a: Action): Result;
+  /** Several actions as one step of the history: one undo takes them all back (R47). */
+  runAll(actions: Action[]): Result;
   /** mm per view point. */
   k: number;
   selected: Selected;

@@ -201,3 +201,33 @@ it('releasedAfter: a mark the model clears (a merge) is no release by "תיקו�
   expect(releasedAfter(marked(p, null), marked(p, 'room-a'), { type: 'setMamad', room: 'room-a' }, was)).toBeNull();
   expect(releasedAfter(marked(p, null), { ...marked(p, null), mamad: 'none' }, { type: 'setMamad', room: 'none' }, was)).toBeNull();
 });
+
+it('dispatchAll: n walls classed in one step: one undo returns all, one redo re-applies all, the earlier history stays (R47)', () => {
+  const store = createStore();
+  store.load(open());
+  store.dispatch({ type: 'setName', name: 'before' });
+  const ids = ['top', 'right', 'bottom', 'left'];
+  const r = store.dispatchAll(ids.map(wallId => ({ type: 'classify', wallId, cls: 'fixed' }) as const));
+  expect(r.ok).toBe(true);
+  const cls = () => ids.map(id => store.project!.wallClass[id] ?? 'unknown');
+  expect(cls()).toEqual(['fixed', 'fixed', 'fixed', 'fixed']);
+  store.undo();
+  expect(cls()).toEqual(['unknown', 'unknown', 'unknown', 'unknown']);
+  expect(store.project!.name).toBe('before');
+  store.redo();
+  expect(cls()).toEqual(['fixed', 'fixed', 'fixed', 'fixed']);
+  store.undo();
+  store.undo(); // the step before the batch is still there
+  expect(store.project!.name).toBe('box');
+  expect(store.canUndo).toBe(false);
+});
+
+it('dispatchAll: a refusal anywhere changes nothing and pushes nothing; an empty list is refused', () => {
+  const store = createStore();
+  store.load(open());
+  const before = store.project;
+  expect(store.dispatchAll([{ type: 'classify', wallId: 'top', cls: 'fixed' }, { type: 'classify', wallId: 'nope', cls: 'fixed' }])).toEqual({ ok: false, reason: 'invalid-action' });
+  expect(store.project).toBe(before);
+  expect(store.canUndo).toBe(false);
+  expect(store.dispatchAll([]).ok).toBe(false);
+});

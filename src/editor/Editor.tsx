@@ -47,13 +47,14 @@ export function useEditor({ store, page, plaster, measure, ptPerPx }: { store: S
     setQuestion(q => (q && holds(q) ? q : null));
   }, [drawing]);
 
-  const run = (a: Action): Result => {
+  // one action, or several as one step of the history (R47)
+  const run = (a: Action | Action[]): Result => {
     const before = store.project!;
-    const r = store.dispatch(a);
+    const r = Array.isArray(a) ? store.dispatchAll(a) : store.dispatch(a);
     if (r.ok) ran.current = r.project.existing;
     if (!r.ok) {
       // an opening on a mamad wall opens by itself (its "תיקון"), not by releasing the mamad (owner R35)
-      const ofOpening = a.type === 'x.setOpening' || a.type === 'x.deleteOpening';
+      const ofOpening = !Array.isArray(a) && (a.type === 'x.setOpening' || a.type === 'x.deleteOpening');
       setMessage(ofOpening && r.reason === 'mamad-locked' ? e.mamadOpeningLocked : (copy.reason[r.reason] ?? e.reasonOther));
       return r;
     }
@@ -76,7 +77,7 @@ export function useEditor({ store, page, plaster, measure, ptPerPx }: { store: S
     if (selected && !list[selected.kind].some(x => x.id === selected.id)) setSelected(null);
     return r;
   };
-  const ctx: EditorCtx | null = project && derived && { project, derived, run, k, selected, select: setSelected, say: setMessage };
+  const ctx: EditorCtx | null = project && derived && { project, derived, run, runAll: run, k, selected, select: setSelected, say: setMessage };
   // the hooks run every time, with or without a project, so that their state keeps its place
   const stub = { project: null, derived: null } as unknown as EditorCtx;
   const mmPerPx = ptPerPx * k;
