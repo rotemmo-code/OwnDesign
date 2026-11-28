@@ -1,0 +1,437 @@
+import { expect, type Page, test } from '@playwright/test';
+import { copy } from '../../src/copy';
+import { COLOR } from '../../src/theme';
+import { viewOf } from '../fixtures/dims';
+import { canvas, clickMm, drawFive, drawOpening, drawWall, e, FIVE, hoverMm, message, O, onScreen, pick, start, tool, twoRooms, wallBoxes, watch } from './editorKit';
+
+// Task 11b: openings, separators, splitting, moves of wall ends and opening edges, finishes and net areas.
+watch();
+
+const opening = (page: Page) => page.locator('[data-opening]');
+const step = (page: Page) => page.getByTestId('step');
+const label = (page: Page, name: string) => page.locator('[data-room]').filter({ hasText: name });
+/** The four outer walls and the room they close, marked as the apartment's; the outer walls stay open. */
+async function oneRoom(page: Page) {
+  await drawFive(page, [0, 1, 2, 3]);
+  const r = await pick(page, [1700, 2200], 'room-details');
+  await r.getByLabel(e.inApartment).check();
+}
+/** One wall's box, its end where a free click put it: within 3 mm, a screen pixel when zoomed in (Firefox clicks on whole pixels). */
+const expectBox = (boxes: number[][], want: number[]) => {
+  expect(boxes).toHaveLength(1);
+  boxes[0].forEach((v, i) => expect(Math.abs(v - want[i]), String(i)).toBeLessThan(3));
+};
+const lockOf = (page: Page) => page.getByTestId('opening-details').getByTestId('lock');
+const widthField = (page: Page) => page.getByTestId('opening-details').getByLabel(e.widthField);
+
+test('the tool row holds every tool, in one size, before the drawing', async ({ page }) => {
+  await start(page);
+  const names = [e.select, e.wall, e.door, e.window, e.passage, e.separator, e.splitTool, e.remove, copy.measure.title];
+  const row = page.getByRole('group', { name: e.tools });
+  await expect(row.getByRole('button')).toHaveText(names);
+  const sizes = await page.locator('button:visible').evaluateAll(list => list.map(b => `${getComputedStyle(b).fontSize} ${Math.round(b.getBoundingClientRect().height)}`));
+  expect(new Set(sizes)).toEqual(new Set([sizes[0]]));
+  expect(await row.evaluate((g, svg) => !!(g.compareDocumentPosition(svg!) & Node.DOCUMENT_POSITION_FOLLOWING), await canvas(page).elementHandle())).toBe(true);
+});
+
+test('an opening by two clicks on the wall, the kind chosen first; its width can be typed', async ({ page }) => {
+  await start(page);
+  await drawFive(page);
+  await drawOpening(page, e.window, [1100, 100], [2300, 100]);
+  await expect(opening(page)).toHaveAttribute('data-kind', 'window');
+  const win = await pick(page, [1700, 100], 'opening-details');
+  await expect(win.getByRole('heading')).toHaveText(e.openingKinds.window);
+  await expect(widthField(page)).toHaveValue('120');
+  await drawOpening(page, e.door, [3250, 1200], [3250, 2000]);
+  await pick(page, [3250, 1600], 'opening-details');
+  await expect(widthField(page)).toHaveValue('80');
+  await widthField(page).fill('90');
+  await widthField(page).press('Enter');
+  await expect(widthField(page)).toHaveValue('90');
+  await expect(message(page)).toHaveText('');
+});
+
+test('a door of the default 80 cm by one click and Enter', async ({ page }) => {
+  await start(page);
+  await drawFive(page);
+  await tool(page, e.door);
+  await clickMm(page, [3250, 1200]);
+  await expect(step(page)).toHaveText(e.openingSecond);
+  await page.getByLabel(e.widthField).press('Enter');
+  await pick(page, [3250, 1600], 'opening-details');
+  await expect(widthField(page)).toHaveValue('80');
+});
+
+test('the second click on another wall is refused with a note; the first stays', async ({ page }) => {
+  await start(page);
+  await drawFive(page);
+  await tool(page, e.door);
+  await clickMm(page, [3250, 1200]);
+  await clickMm(page, [1500, 100]);
+  await expect(message(page)).toHaveText(e.otherWall);
+  await expect(opening(page)).toHaveCount(0);
+  await clickMm(page, [3250, 2000]);
+  await expect(opening(page)).toHaveCount(1);
+});
+
+test('a window and an entry door are locked as soon as they are drawn: a change is refused; תיקון, a new width, אישור', async ({ page }) => {
+  await start(page);
+  await drawFive(page);
+  await drawOpening(page, e.window, [1100, 100], [2300, 100]);
+  await pick(page, [1700, 100], 'opening-details');
+  await expect(lockOf(page)).toContainText(e.windowLocked);
+  await widthField(page).fill('100');
+  await widthField(page).press('Enter');
+  await expect(message(page)).toHaveText(copy.reason['window-locked']!);
+  await expect(message(page)).toHaveAttribute('aria-live', 'polite');
+  await expect(widthField(page)).toHaveValue('120');
+  await lockOf(page).getByRole('button', { name: e.fix }).click();
+  await expect(lockOf(page)).toContainText(e.openingOpen);
+  await expect(opening(page)).toHaveAttribute('data-dashed', 'true');
+  await widthField(page).fill('100');
+  await widthField(page).press('Enter');
+  await expect(widthField(page)).toHaveValue('100');
+  await lockOf(page).getByRole('button', { name: e.confirm }).click();
+  await expect(lockOf(page)).toContainText(e.windowLocked);
+  await expect(opening(page)).toHaveAttribute('data-dashed', 'false');
+  // an edge moved, or a delete, on the locked window: nothing changes and the note says why (R23)
+  await clickMm(page, [1100, 100]);
+  await expect(step(page)).toHaveText(e.moveEdge);
+  await clickMm(page, [900, 100]);
+  await expect(message(page)).toHaveText(copy.reason['window-locked']!);
+  await page.keyboard.press('Escape');
+  await expect(widthField(page)).toHaveValue('100');
+  await tool(page, e.remove);
+  await clickMm(page, [1700, 100]);
+  await expect(message(page)).toHaveText(copy.reason['window-locked']!);
+  await expect(opening(page)).toHaveCount(1);
+  // a door turned into the entry door locks at once; turning it back needs תיקון
+  await drawOpening(page, e.door, [4300, 4300], [5200, 4300]);
+  const door = await pick(page, [4750, 4300], 'opening-details');
+  await expect(door.getByTestId('lock')).toHaveText(e.free);
+  await door.getByRole('button', { name: e.openingKinds.entry, exact: true }).click();
+  await expect(door.getByTestId('lock')).toContainText(e.entryLocked);
+  await door.getByRole('button', { name: e.openingKinds.door, exact: true }).click();
+  await expect(message(page)).toHaveText(copy.reason['entry-door-locked']!);
+  await expect(door.getByRole('heading')).toHaveText(e.openingKinds.entry);
+  expect(await page.locator('body').innerText()).not.toContain('מוגן');
+});
+
+test('openings are painted by their lock: locked in their wall\'s colour, free in the existing colour; the legend names them', async ({ page }) => {
+  await start(page);
+  await oneRoom(page);
+  await tool(page, e.wall);
+  await drawWall(page, FIVE[4]);
+  await page.getByRole('button', { name: e.part(1, '12.00') }).click();
+  await drawOpening(page, e.window, [1100, 100], [2300, 100]);
+  await drawOpening(page, e.door, [3250, 1200], [3250, 2000]);
+  const win = page.locator('[data-opening][data-kind="window"] path').first();
+  const door = page.locator('[data-opening][data-kind="door"] path').first();
+  await expect(win).toHaveAttribute('stroke', COLOR.exterior);
+  await expect(door).toHaveAttribute('stroke', COLOR.existing);
+  const legend = page.getByRole('region', { name: e.legend });
+  await expect(legend).toContainText(e.lockedOpening);
+  await expect(legend).toContainText(e.freeOpening);
+});
+
+test('an inner door is free: its edge moved and its width typed without תיקון; one undo step each', async ({ page }) => {
+  await start(page);
+  await drawFive(page);
+  await drawOpening(page, e.door, [3250, 1200], [3250, 2000]);
+  await pick(page, [3250, 1600], 'opening-details');
+  await clickMm(page, [3250, 1200]); // its first edge
+  await expect(step(page)).toHaveText(e.moveEdge);
+  await clickMm(page, [3250, 1100]); // no corner there: where the click was, to a screen pixel
+  await expect.poll(async () => Math.abs(Number(await widthField(page).inputValue()) - 90)).toBeLessThan(0.5);
+  await page.keyboard.press('Control+z');
+  await expect(widthField(page)).toHaveValue('80');
+  await page.keyboard.press('Control+y');
+  await expect(widthField(page)).not.toHaveValue('80');
+  await widthField(page).fill('85');
+  await widthField(page).press('Enter');
+  await expect(widthField(page)).toHaveValue('85');
+});
+
+test('two doors in one mamad opening are accepted, a third is refused', async ({ page }) => {
+  await start(page);
+  await twoRooms(page);
+  const right = await pick(page, [4700, 2200], 'room-details');
+  await right.getByLabel(e.isMamad).check();
+  await drawOpening(page, e.door, [3250, 1200], [3250, 2000]);
+  await drawOpening(page, e.door, [3250, 1200], [3250, 2000]);
+  await expect(opening(page)).toHaveCount(2);
+  await drawOpening(page, e.door, [3250, 1200], [3250, 2000]);
+  await expect(message(page)).toHaveText(copy.reason['invalid-geometry']!);
+  await expect(opening(page)).toHaveCount(2);
+});
+
+test('a separator from face to face splits a room; deleting it merges back; a click with no face near is refused', async ({ page }) => {
+  await start(page);
+  await oneRoom(page);
+  await tool(page, e.separator);
+  await clickMm(page, [1700, 2200]);
+  await expect(message(page)).toHaveText(e.noFace);
+  await clickMm(page, [200, 2000]);
+  await expect(step(page)).toHaveText(e.separatorSecond);
+  await clickMm(page, [6200, 2000]);
+  await expect(page.locator('[data-separator]')).toHaveCount(1);
+  await expect(page.getByText(/התחלק\. איזה חלק ישמור על השם/)).toBeVisible();
+  await expect(page.locator('[data-room]')).toHaveCount(2);
+  await tool(page, e.remove);
+  await clickMm(page, [3000, 2000]);
+  await expect(page.locator('[data-separator]')).toHaveCount(0);
+  await expect(page.getByText(/התאחדו לחלל אחד/)).toBeVisible();
+  await expect(page.locator('[data-room]')).toHaveCount(1);
+});
+
+test('a separator inside the mamad is refused', async ({ page }) => {
+  await start(page);
+  await twoRooms(page);
+  const right = await pick(page, [4700, 2200], 'room-details');
+  await right.getByLabel(e.isMamad).check();
+  await tool(page, e.separator);
+  await clickMm(page, [3300, 3000]);
+  await clickMm(page, [6200, 3000]);
+  await expect(message(page)).toHaveText(copy.reason['mamad-locked']!);
+  await expect(page.locator('[data-separator]')).toHaveCount(0);
+});
+
+test('the split tool cuts a wall in two; both parts keep its class and its material', async ({ page }) => {
+  await start(page);
+  await tool(page, e.wall);
+  await page.getByLabel(e.material).selectOption({ label: e.materials.block });
+  await drawWall(page, FIVE[0]);
+  const w = await pick(page, [3000, 100], 'wall-details');
+  await w.getByRole('button', { name: e.classes.fixed }).click();
+  await tool(page, e.splitTool);
+  await clickMm(page, [2000, 100]);
+  expect(await wallBoxes(page)).toHaveLength(2);
+  for (const at of [[1000, 100], [4000, 100]] as [number, number][]) {
+    const part = await pick(page, at, 'wall-details');
+    await expect(part.getByRole('button', { name: e.classes.fixed })).toHaveAttribute('aria-pressed', 'true');
+    await expect(part.getByLabel(e.material)).toHaveValue('block');
+  }
+});
+
+test('picking up a wall end previews the move and the next click places it; Escape cancels; one undo returns it', async ({ page }) => {
+  await start(page);
+  await tool(page, e.wall);
+  await drawWall(page, FIVE[4]);
+  await pick(page, [3250, 3000], 'wall-details');
+  await clickMm(page, [3250, 4200]);
+  await expect(step(page)).toHaveText(e.moveEnd);
+  await hoverMm(page, [3250, 3500]);
+  await expect(page.getByTestId('wall-preview')).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(page.getByTestId('wall-preview')).toHaveCount(0);
+  expect(await wallBoxes(page)).toEqual([[3200, 200, 3300, 4200]]);
+  await clickMm(page, [3250, 4200]);
+  await clickMm(page, [3250, 3000]);
+  expectBox(await wallBoxes(page), [3200, 200, 3300, 3000]);
+  await page.keyboard.press('Control+z');
+  expect(await wallBoxes(page)).toEqual([[3200, 200, 3300, 4200]]);
+});
+
+test('a half-done move survives איפוס תצוגה and a zoom', async ({ page }) => {
+  await start(page);
+  await tool(page, e.wall);
+  await drawWall(page, FIVE[4]);
+  await pick(page, [3250, 3000], 'wall-details');
+  await clickMm(page, [3250, 4200]);
+  await page.getByRole('button', { name: copy.fit }).click();
+  await page.mouse.move(...(await onScreen(page, viewOf(50, [3250, 2000]))));
+  await page.mouse.wheel(0, -100);
+  await expect(step(page)).toHaveText(e.moveEnd);
+  await clickMm(page, [3250, 3000]);
+  expectBox(await wallBoxes(page), [3200, 200, 3300, 3000]);
+});
+
+test('typing 250 moves the selected wall end to 250 cm; a bad length changes nothing and says why', async ({ page }) => {
+  await start(page);
+  await tool(page, e.wall);
+  await drawWall(page, FIVE[4]);
+  await pick(page, [3250, 3000], 'wall-details');
+  await clickMm(page, [3250, 4200]);
+  const length = page.getByLabel(e.wallLength);
+  for (const bad of ['', 'abc', '12,5', '-1', '1e9']) {
+    await length.fill(bad);
+    await length.press('Enter');
+    await expect(message(page), bad).toHaveText(e.badLength);
+  }
+  expect(await wallBoxes(page)).toEqual([[3200, 200, 3300, 4200]]);
+  await length.fill('250');
+  await length.press('Enter');
+  expect(await wallBoxes(page)).toEqual([[3200, 200, 3300, 2700]]);
+});
+
+test('the end of a locked outer wall moves only along its own line', async ({ page }) => {
+  await start(page);
+  await oneRoom(page);
+  await page.getByRole('button', { name: e.confirm }).click(); // the outer walls lock
+  const before = await wallBoxes(page);
+  await pick(page, [6300, 3000], 'wall-details');
+  await clickMm(page, [6300, 4200]);
+  await clickMm(page, [6600, 4800]); // 30 cm off its line, 60 cm past its end
+  const after = await wallBoxes(page);
+  expect([after[3][0], after[3][2]]).toEqual([before[3][0], before[3][2]]); // the same line
+  expect(Math.abs(after[3][3] - 4800)).toBeLessThan(3); // longer, to where the click was (to a screen pixel)
+});
+
+test('a finish of 2 cm on one side changes only that side\'s room and shows קיר and אחרי גימור', async ({ page }) => {
+  await start(page);
+  await twoRooms(page);
+  const right = await pick(page, [4700, 2200], 'room-details');
+  await right.getByLabel(e.inApartment).check();
+  const w = await pick(page, [3250, 3000], 'wall-details');
+  await w.getByLabel(e.finishSide('סלון')).fill('2');
+  await w.getByLabel(e.finishSide('סלון')).press('Enter');
+  const left = await pick(page, [1700, 2200], 'room-details');
+  await expect(left.getByTestId('measurement').first()).toContainText(`${e.resultWall}: ${e.area('12.00')}`);
+  await expect(left.getByTestId('measurement').first()).toContainText(`${e.resultNet}: ${e.area('11.92')}`);
+  const other = await pick(page, [4700, 2200], 'room-details');
+  await expect(other.getByTestId('measurement').first()).toHaveText(`${e.area('11.60')} ${copy.byDrawing}`);
+});
+
+test('exterior wall: finish inside accepted, outside field disabled with a reason', async ({ page }) => {
+  await start(page);
+  await oneRoom(page);
+  const w = await pick(page, [100, 3000], 'wall-details');
+  const outside = w.locator('label', { hasText: e.finishNoRoom });
+  await expect(outside.locator('input')).toBeDisabled();
+  await expect(outside).toContainText(copy.reason['finish-outer-side']!);
+  const inside = w.getByLabel(e.finishSide(e.unnamed));
+  await inside.fill('1.5');
+  await inside.press('Enter');
+  await expect(inside).toHaveValue('1.5');
+  await expect(message(page)).toHaveText('');
+});
+
+test('a free wall end takes an end finish; a joined end is disabled with its reason', async ({ page }) => {
+  await start(page);
+  await oneRoom(page);
+  await tool(page, e.wall);
+  await page.getByLabel(e.thickness).fill('10');
+  await clickMm(page, [100, 2000]); // from the middle of the left wall
+  await clickMm(page, [1500, 2000]); // to a free end in the room
+  const w = await pick(page, [800, 2000], 'wall-details');
+  const start_ = w.locator('label', { hasText: e.finishStart });
+  await expect(start_.locator('input')).toBeDisabled();
+  await expect(start_).toContainText(e.endJoined);
+  const end = w.getByLabel(e.finishEnd);
+  await expect(end).toBeEnabled();
+  await end.fill('1');
+  await end.press('Enter');
+  await expect(end).toHaveValue('1');
+});
+
+test('a finish kept where it no longer applies shows לא בשימוש and counts nothing', async ({ page }) => {
+  await start(page);
+  await twoRooms(page);
+  const w = await pick(page, [3250, 3000], 'wall-details');
+  await w.getByLabel(e.finishSide('סלון')).fill('2');
+  await w.getByLabel(e.finishSide('סלון')).press('Enter');
+  await expect(label(page, 'סלון')).toContainText('11.92');
+  const left = await pick(page, [1700, 2200], 'room-details');
+  await left.getByLabel(e.outdoor).check();
+  await expect(label(page, 'סלון')).toContainText('12.00');
+  const again = await pick(page, [3250, 3000], 'wall-details');
+  await expect(again.locator('label', { hasText: e.notUsed }).locator('input')).toHaveValue('2');
+});
+
+test('a finish is a hatched strip in the finish colour, across a door too; nothing is drawn over a room\'s label', async ({ page }) => {
+  await start(page);
+  await twoRooms(page);
+  await drawOpening(page, e.door, [3250, 1200], [3250, 2000]);
+  const w = await pick(page, [3250, 3000], 'wall-details');
+  await w.getByLabel(e.finishSide('סלון')).fill('2');
+  await w.getByLabel(e.finishSide('סלון')).press('Enter');
+  const strip = page.locator('[data-finish]');
+  await expect(strip).toHaveCount(1);
+  await expect(strip).toHaveAttribute('fill', /^url\(#hatch-finish/);
+  await expect(strip).toHaveAttribute('stroke', COLOR.finish);
+  const box = await strip.evaluate((p, o) => {
+    const n = (p.getAttribute('d') ?? '').match(/-?\d+(\.\d+)?/g)!.map(Number);
+    const ys = n.filter((_, i) => i % 2 === 1).map(y => y - o.y);
+    return [Math.min(...ys), Math.max(...ys)];
+  }, O);
+  expect(box[0]).toBeLessThan(1200); // across the door's gap, 1200 to 2000
+  expect(box[1]).toBeGreaterThan(2000);
+  // R27: no shape painted after a label meets its box
+  const over = await page.evaluate(() => {
+    const svg = document.querySelector('[data-testid="canvas"]')!;
+    const labels = [...svg.querySelectorAll('[data-room] text')];
+    const shapes = [...svg.querySelectorAll('path, rect, circle, line, text, polygon')].filter(x => !x.closest('[data-room]'));
+    const meet = (a: DOMRect, b: DOMRect) => a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
+    return labels.flatMap(l => shapes.filter(x => l.compareDocumentPosition(x) & Node.DOCUMENT_POSITION_FOLLOWING && meet(l.getBoundingClientRect(), x.getBoundingClientRect())).map(x => x.tagName));
+  });
+  expect(over).toEqual([]);
+  // R26: two sets of patterns, no id twice
+  const ids = await page.locator('[id]').evaluateAll(list => list.map(x => x.id));
+  expect(ids.length).toBe(new Set(ids).size);
+});
+
+test('areas are net with their statement; the switch shows gross; with no finish neither shows', async ({ page }) => {
+  await start(page);
+  await twoRooms(page);
+  await expect(page.getByRole('group', { name: e.areas })).toHaveCount(0);
+  const w = await pick(page, [3250, 3000], 'wall-details');
+  await w.getByLabel(e.finishSide('סלון')).fill('2');
+  await w.getByLabel(e.finishSide('סלון')).press('Enter');
+  const areas = page.getByRole('group', { name: e.areas });
+  await expect(areas.getByTestId('areas-statement')).toHaveText(e.net);
+  await expect(label(page, 'סלון')).toContainText('11.92');
+  await areas.getByRole('button', { name: e.grossButton }).click();
+  await expect(areas.getByTestId('areas-statement')).toHaveText(e.gross);
+  await expect(label(page, 'סלון')).toContainText('12.00');
+});
+
+test('a bad finish changes nothing and says why; an empty field takes the finish away', async ({ page }) => {
+  await start(page);
+  await twoRooms(page);
+  const w = await pick(page, [3250, 3000], 'wall-details');
+  const field = w.getByLabel(e.finishSide('סלון'));
+  for (const bad of ['0', '20.1', 'abc', '1,5', '1e1']) {
+    await field.fill(bad);
+    await field.press('Enter');
+    await expect(message(page), bad).toHaveText(e.badFinish);
+    await expect(field).toHaveValue('');
+  }
+  await field.fill('2');
+  await field.press('Enter');
+  await expect(page.locator('[data-finish]')).toHaveCount(1);
+  await field.fill('');
+  await field.press('Enter');
+  await expect(page.locator('[data-finish]')).toHaveCount(0);
+});
+
+test('the plaster-in-wall warning shows when a finish is added and the drawing includes plaster', async ({ page }) => {
+  await start(page, 'inWall');
+  await twoRooms(page);
+  const w = await pick(page, [3250, 3000], 'wall-details');
+  await w.getByLabel(e.finishSide('סלון')).fill('1');
+  await w.getByLabel(e.finishSide('סלון')).press('Enter');
+  await expect(message(page)).toHaveText(e.plasterInWall);
+});
+
+test('the opening, separator and split tools ask to zoom in when zoomed out', async ({ page }) => {
+  await start(page);
+  for (const name of [e.door, e.window, e.passage, e.separator, e.splitTool]) {
+    await tool(page, name);
+    await page.getByRole('button', { name: copy.fit }).click();
+    await expect(page.getByTestId('zoom-hint'), name).toHaveText(e.zoomHint);
+  }
+});
+
+test('the delete tool takes an opening and a separator too', async ({ page }) => {
+  await start(page);
+  await oneRoom(page);
+  await drawOpening(page, e.passage, [3000, 4300], [3800, 4300]);
+  await tool(page, e.separator);
+  await clickMm(page, [200, 2000]);
+  await clickMm(page, [6200, 2000]);
+  await tool(page, e.remove);
+  await clickMm(page, [3400, 4300]);
+  await expect(opening(page)).toHaveCount(0);
+  await clickMm(page, [3000, 2000]);
+  await expect(page.locator('[data-separator]')).toHaveCount(0);
+});

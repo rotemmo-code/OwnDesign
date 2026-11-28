@@ -1,12 +1,12 @@
-import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
+import { type ReactNode, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { copy } from '../copy';
 import type { Action, Id, Plaster, Result } from '../model/types';
 import type { ExtractedPage } from '../pdf/extract';
 import type { Tool } from './Canvas';
-import { derive, type Lock, Overlay } from './Overlay';
+import { derive, deriveFinish, type Lock, Overlay } from './Overlay';
 import { type Question, SidePanel } from './SidePanel';
 import { snapIndex } from './snap';
-import { type EditorCtx, type EditTool, type Selected, Toolbar, type ToolName, useDeleteTool, useSelectTool, useWallTool } from './Tools';
+import { type EditorCtx, type EditTool, type Selected, Toolbar, type ToolName, useDeleteTool, useOpeningTool, useSelectTool, useSeparatorTool, useSplitTool, useWallTool } from './Tools';
 import { roomEvents, type Store } from './useProject';
 
 const e = copy.editor;
@@ -26,6 +26,10 @@ export function useEditor({ store, page, plaster, measure, ptPerPx }: { store: S
   const project = store.project;
   const k = project?.calibration.mmPerPt ?? 1;
   const derived = useMemo(() => project && derive(project), [project?.existing, project?.envelope, project?.wallClass]);
+  // the finishes' strips and the areas after them are the costly part: they follow a moment after an edit
+  const later = useDeferredValue(project?.existing);
+  const finished = useMemo(() => later && deriveFinish(later), [later]);
+  const [net, setNet] = useState(true);
   // The drawing as the editor's own last action left it. When the drawing changes otherwise (undo, redo, a rescale, a load) its
   // message and a question about rooms no longer there go; a rename or a plaster answer leaves the drawing and the message alone.
   const ran = useRef<unknown>(null);
@@ -61,18 +65,26 @@ export function useEditor({ store, page, plaster, measure, ptPerPx }: { store: S
       : r.notice === 'plaster-in-wall' ? e.plasterInWall
       : '',
     );
-    if (selected && !(selected.kind === 'wall' ? r.project.existing.walls : r.project.existing.rooms).some(x => x.id === selected.id)) setSelected(null);
+    const s = r.project.existing;
+    const list = { wall: s.walls, room: s.rooms, opening: s.openings, separator: s.separators };
+    if (selected && !list[selected.kind].some(x => x.id === selected.id)) setSelected(null);
     return r;
   };
-  const ctx: EditorCtx | null = project && derived && { project, derived, run, k, select: setSelected, say: setMessage };
+  const ctx: EditorCtx | null = project && derived && { project, derived, run, k, selected, select: setSelected, say: setMessage };
   // the hooks run every time, with or without a project, so that their state keeps its place
   const stub = { project: null, derived: null } as unknown as EditorCtx;
-  const select = useSelectTool(ctx ?? stub);
+  const mmPerPx = ptPerPx * k;
+  const select = useSelectTool(ctx ?? stub, fills);
   const remove = useDeleteTool(ctx ?? stub);
-  const wall = useWallTool(ctx ?? stub, fills, plaster, ptPerPx * k);
+  const wall = useWallTool(ctx ?? stub, fills, plaster, mmPerPx);
+  const door = useOpeningTool(ctx ?? stub, fills, 'door', mmPerPx);
+  const windowTool = useOpeningTool(ctx ?? stub, fills, 'window', mmPerPx);
+  const passage = useOpeningTool(ctx ?? stub, fills, 'passage', mmPerPx);
+  const separator = useSeparatorTool(ctx ?? stub, mmPerPx);
+  const split = useSplitTool(ctx ?? stub, mmPerPx);
   if (!project || !derived || !ctx) return null;
 
-  const tools: Record<ToolName, EditTool> = { select, wall, remove, measure };
+  const tools: Record<ToolName, EditTool> = { select, wall, door, window: windowTool, passage, separator, split, remove, measure };
   const active = tools[tool];
   const fix = (lock: Lock) => {
     if (lock === 'envelope') return void run({ type: 'x.releaseEnvelope' });
@@ -89,6 +101,8 @@ export function useEditor({ store, page, plaster, measure, ptPerPx }: { store: S
     <Overlay
       project={project}
       derived={derived}
+      finished={finished ?? null}
+      net={net}
       k={k}
       ptPerPx={ptPerPx}
       selected={selected}
@@ -125,6 +139,9 @@ export function useEditor({ store, page, plaster, measure, ptPerPx }: { store: S
         onConfirmMamad={confirmMamad}
         tool={active.panel}
         plaster={plaster}
+        finished={finished ?? null}
+        net={net}
+        onNet={setNet}
       />
     ),
   };

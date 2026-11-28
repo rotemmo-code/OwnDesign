@@ -102,3 +102,15 @@ header .project-name input { inline-size: 14em; }
 .zoom { font-weight: 700; min-inline-size: 3.5em; white-space: nowrap; }
 .hidden-label { position: absolute; inline-size: 1px; block-size: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 [data-testid='zoom-hint']:empty { display: none; }
+
+/* Task 11b: openings, separators, moves, finishes. */
+.handle { fill: var(--c-paper); stroke: var(--c-dimension); stroke-width: 2px; vector-effect: non-scaling-stroke; pointer-events: none; }
+.separator { stroke: var(--c-ink); stroke-width: 1px; vector-effect: non-scaling-stroke; pointer-events: none; }
+.separator-preview { stroke: var(--c-dimension); stroke-width: 2px; stroke-dasharray: 6 3; vector-effect: non-scaling-stroke; pointer-events: none; }
+.opening, [data-finish] { pointer-events: none; }
+.legend svg.defs { position: absolute; }
+.panel fieldset { border: 1px solid var(--c-ink); border-radius: 4px; margin: 0; padding: 4px 8px; }
+.finishes label { display: block; }
+.finishes input:disabled { opacity: 0.5; }
+.areas { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.areas > span { inline-size: 100%; }

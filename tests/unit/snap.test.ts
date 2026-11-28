@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Clip, ExtractedPage, PathItem } from '../../src/pdf/extract';
 import type { Vec } from '../../src/shared';
-import { holdAxis, pickAt, secondEnd, snapCentre, snapIndex, snapPoint } from '../../src/editor/snap';
+import { alongWall, holdAxis, offsetOn, pickAt, secondEnd, snapCentre, snapFace, snapIndex, snapPoint, wallAt } from '../../src/editor/snap';
 
 // Synthetic pages in view points: 842 x 595 unless a test says otherwise.
 const stroke = (pts: Vec[], more: Partial<PathItem> = {}): PathItem => ({
@@ -200,5 +200,46 @@ describe('the wall tool: snapCentre, holdAxis and pickAt', () => {
     expect(pickAt({ x: 500, y: 300 }, s, 20)).toEqual({ kind: 'room', id: 'r' });
     expect(pickAt({ x: 500, y: 500 }, s, 20)).toBeNull();
     expect(pickAt({ x: 5000, y: 500 }, s, 20)).toBeNull();
+  });
+});
+
+describe('11b: handles, openings, separators and faces', () => {
+  const walls = [
+    { id: 'w1', a: { x: 0, y: 0 }, b: { x: 1000, y: 0 }, thickness: 100 },
+    { id: 'w2', a: { x: 0, y: 500 }, b: { x: 1000, y: 500 }, thickness: 100 },
+  ];
+  const openings = [{ id: 'o1', wallId: 'w1', offset: 200, width: 300 }];
+  const separators = [{ id: 's1', a: { x: 1500, y: 0 }, b: { x: 1500, y: 500 } }];
+  const plan = { walls, openings, separators, rooms: [] };
+  it('pickAt: the selected wall\'s end handles, the nearer end first', () => {
+    expect(pickAt({ x: 990, y: 5 }, plan, 20, { kind: 'wall', id: 'w1' })).toEqual({ kind: 'end', wall: 'w1', end: 'b' });
+    expect(pickAt({ x: 10, y: 0 }, plan, 20, { kind: 'wall', id: 'w1' })).toEqual({ kind: 'end', wall: 'w1', end: 'a' });
+    expect(pickAt({ x: 990, y: 5 }, plan, 20)).toEqual({ kind: 'wall', id: 'w1' }); // not selected: no handles
+  });
+  it('pickAt: an opening\'s edge handles when it is selected; else the opening before its wall', () => {
+    expect(pickAt({ x: 205, y: 3 }, plan, 20, { kind: 'opening', id: 'o1' })).toEqual({ kind: 'edge', opening: 'o1', edge: 'start' });
+    expect(pickAt({ x: 498, y: -3 }, plan, 20, { kind: 'opening', id: 'o1' })).toEqual({ kind: 'edge', opening: 'o1', edge: 'end' });
+    expect(pickAt({ x: 350, y: 30 }, plan, 20)).toEqual({ kind: 'opening', id: 'o1' });
+    expect(pickAt({ x: 800, y: 30 }, plan, 20)).toEqual({ kind: 'wall', id: 'w1' });
+  });
+  it('pickAt: a separator by its line, within the radius', () => {
+    expect(pickAt({ x: 1510, y: 250 }, plan, 20)).toEqual({ kind: 'separator', id: 's1' });
+    expect(pickAt({ x: 1530, y: 250 }, plan, 20)).toBeNull();
+  });
+  it('wallAt: the wall under the point, openings aside', () => {
+    expect(wallAt({ x: 350, y: 30 }, walls, 20)).toBe('w1');
+    expect(wallAt({ x: 350, y: 250 }, walls, 20)).toBeNull();
+  });
+  it('alongWall and offsetOn: a point of the centre line and the foot of a point on it', () => {
+    expect(alongWall(walls[0], 250)).toEqual({ x: 250, y: 0 });
+    expect(offsetOn(walls[0], { x: 250, y: 70 })).toBe(250);
+    expect(offsetOn(walls[0], { x: -40, y: 70 })).toBe(-40);
+  });
+  describe('snapFace: the nearest point on a face of a wall already drawn (owner R24)', () => {
+    const outline = [[{ x: 0, y: -50 }, { x: 1000, y: -50 }, { x: 1000, y: 50 }, { x: 0, y: 50 }]];
+    it('on a face', () => expect(snapFace({ x: 400, y: 50 }, outline, 20)).toEqual({ x: 400, y: 50 }));
+    it('3 px off a face (at 4 mm a pixel)', () => expect(snapFace({ x: 400, y: 62 }, outline, 32)).toEqual({ x: 400, y: 50 }));
+    it('no face within the radius', () => expect(snapFace({ x: 400, y: 200 }, outline, 32)).toBeNull());
+    it('a corner', () => expect(snapFace({ x: 1010, y: 60 }, outline, 32)).toEqual({ x: 1000, y: 50 }));
   });
 });
