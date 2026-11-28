@@ -359,6 +359,26 @@ test('קבלת כל ההצעות is one step of the history: one ביטול פע
   expect(await classes()).toEqual(Array(5).fill(e.classes.fixed));
 });
 
+test('the progress line counts what holds approval back: an opening outside the apartment is listed with its note, not counted, until it is released (R49)', async ({ page }) => {
+  await start(page);
+  await twoRooms(page);
+  await openCheck(page);
+  await step(page, 'rooms').getByRole('checkbox', { name: new RegExp(`^${e.unnamed}`) }).uncheck(); // the right room is not the apartment's
+  await expect(progress(page)).toHaveText(e.progress(0, 2));
+  await drawOpening(page, e.window, [6300, 1500], [6300, 2300]); // on the right wall: beside no room of the apartment
+  await expect(items(page, 'windows')).toHaveCount(1);
+  await expect(items(page, 'windows').first().getByTestId('not-needed')).toHaveText(e.notNeeded);
+  await expect(progress(page)).toHaveText(e.progress(0, 2));
+  await button(items(page, 'windows').first(), e.fix).click(); // released: approval waits for its אישור
+  await expect(progress(page)).toHaveText(e.progress(0, 3));
+  await expect(items(page, 'windows').first().getByTestId('status')).toHaveText(e.notConfirmed);
+  await button(items(page, 'windows').first(), e.confirm).click();
+  await expect(progress(page)).toHaveText(e.progress(0, 2));
+  await button(items(page, 'envelope').first(), e.confirm).click();
+  await button(step(page, 'mamad'), e.noMamad).click();
+  await expect(progress(page)).toHaveText(e.progress(2, 2));
+});
+
 // ---- drafts, which drawing by hand cannot make: through the probe ----
 
 function draft(): Project {

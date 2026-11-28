@@ -1,8 +1,8 @@
 import { memo, type ReactNode } from 'react';
 import { copy } from '../copy';
 import { corners } from '../model/geo';
-import { formatCm, formatM2 } from '../model/measure';
-import type { Id, Opening, Pt, Room } from '../model/types';
+import { formatCm, formatM2, roomsOnSide } from '../model/measure';
+import type { Id, Opening, Project, Pt, Room } from '../model/types';
 import type { Box } from '../pdf/render';
 import type { Lock, Stretch } from './Overlay';
 import { alongWall } from './snap';
@@ -31,6 +31,21 @@ const Button = ({ text, onClick }: { text: string; onClick(): void }) => (
     {text}
   </button>
 );
+const done = (o: Opening) => o.confirmed && !o.released;
+/**
+ * What the progress line counts (R49): what holds approval back in Task 12, as the model's confirmationGaps reads it,
+ * and the mamad's answer. An opening beside a room of the apartment, or one released anywhere; the outer walls; the
+ * mamad. "All" exactly when confirmationGaps is empty and the mamad is answered.
+ */
+export function checkProgress(p: Project): { n: number; m: number; counted: Set<Id> } {
+  const s = p.existing;
+  const apartment = new Set(s.rooms.filter(r => r.inApartment).map(r => r.id));
+  const beside = (o: Opening) => (['A', 'B'] as const).some(side => roomsOnSide(s, o.wallId, side).some(id => apartment.has(id)));
+  const counted = s.openings.filter(o => o.released || beside(o));
+  const answered = s.rooms.some(r => r.isMamad) || p.mamad === 'none';
+  const n = counted.filter(done).length + (p.envelope === 'confirmed' ? 1 : 0) + (answered ? 1 : 0);
+  return { n, m: counted.length + 2, counted: new Set(counted.map(o => o.id)) };
+}
 const roomText = (c: EditorCtx, r: Room) => `${r.name || e.unnamed} ${e.m2(formatM2(c.derived.gross.get(r.id)?.areaMm2 ?? 0))}`;
 
 /**
@@ -41,8 +56,7 @@ function List({ c, onFix, onShow, stretches }: Props) {
   const p = c.project;
   const s = p.existing;
   const marked = s.rooms.find(r => r.isMamad);
-  const done = (o: Opening) => o.confirmed && !o.released;
-  const confirmed = s.openings.filter(done).length + (p.envelope === 'confirmed' ? 1 : 0) + (marked || p.mamad === 'none' ? 1 : 0);
+  const progress = checkProgress(p);
   const walls = new Map(s.walls.map(w => [w.id, w]));
   const openingBox = (o: Opening) => {
     const w = walls.get(o.wallId)!;
@@ -62,7 +76,8 @@ function List({ c, onFix, onShow, stretches }: Props) {
             const lock = c.derived.openingLocks.get(o.id);
             return (
               <li key={o.id} data-item={o.id}>
-                {e.item(e.openingKinds[o.kind], n, formatCm(o.width))} <span data-testid="status">{done(o) ? e.confirmed : e.notConfirmed}</span>
+                {e.item(e.openingKinds[o.kind], n, formatCm(o.width))}{' '}
+                {progress.counted.has(o.id) ? <span data-testid="status">{done(o) ? e.confirmed : e.notConfirmed}</span> : <span data-testid="not-needed">{e.notNeeded}</span>}
                 {o.review && <span data-testid="review"> {e.review}</span>}
                 <span className="row">
                   <Button text={e.show} onClick={() => onShow({ kind: 'opening', id: o.id }, openingBox(o))} />
@@ -92,7 +107,7 @@ function List({ c, onFix, onShow, stretches }: Props) {
   return (
     <div className="check" data-testid="check">
       <p aria-live="polite" data-testid="progress">
-        <strong>{e.progress(confirmed, s.openings.length + 2)}</strong>
+        <strong>{e.progress(progress.n, progress.m)}</strong>
       </p>
       {step(
         'rooms',

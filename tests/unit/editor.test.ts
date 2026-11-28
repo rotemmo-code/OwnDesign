@@ -1,8 +1,9 @@
 import { expect, it } from 'vitest';
 import { copy } from '../../src/copy';
+import { checkProgress } from '../../src/editor/CheckList';
 import { outerStretches } from '../../src/editor/Overlay';
 import { createStore, newProject, releasedAfter, rescaled, roomEvents } from '../../src/editor/useProject';
-import { envelopeLeaf, envelopeSpans } from '../../src/model/rules';
+import { confirmationGaps, envelopeLeaf, envelopeSpans } from '../../src/model/rules';
 import { apply } from '../../src/model/apply';
 import { ProjectSchema } from '../../src/model/schema';
 import type { Action, Project } from '../../src/model/types';
@@ -247,4 +248,32 @@ it('outerStretches: one ring per envelope stretch of the model, the outer walls 
     const [x0, x1] = [Math.min(w.a.x, w.b.x) - w.thickness, Math.max(w.a.x, w.b.x) + w.thickness];
     for (const q of ring) expect(q.x >= x0 && q.x <= x1, wall).toBe(true);
   }
+});
+
+it('checkProgress: all exactly when confirmationGaps is empty and the mamad is answered; an opening outside the apartment is not counted (R49)', () => {
+  const base = open();
+  const withOpening = (p: Project, o: Partial<Project['existing']['openings'][number]>) => ({ ...p, existing: { ...p.existing, openings: [...p.existing.openings, { ...p.existing.openings[0], id: 'outside', wallId: 'right', offset: 1000, width: 800, kind: 'door' as const, ...o }] } });
+  const notApartmentB = (p: Project): Project => ({ ...p, existing: { ...p.existing, rooms: p.existing.rooms.map(r => (r.id === 'room-b' ? { ...r, inApartment: false } : r)) } });
+  const confirmed = (p: Project): Project => ({ ...p, envelope: 'confirmed', mamad: 'none' });
+  const cases: Project[] = [
+    base,
+    confirmed(base),
+    { ...confirmed(base), mamad: null },
+    { ...confirmed(base), existing: { ...base.existing, openings: base.existing.openings.map(o => (o.id === 'door' ? { ...o, released: true, confirmed: false } : o)) } },
+    { ...confirmed(base), existing: { ...base.existing, openings: base.existing.openings.map(o => (o.id === 'window' ? { ...o, confirmed: false } : o)) } },
+    withOpening(notApartmentB(confirmed(base)), { confirmed: false }),
+    withOpening(notApartmentB(confirmed(base)), { confirmed: false, released: true }),
+    { ...confirmed(base), envelope: 'released' },
+    { ...confirmed(base), envelope: undefined },
+  ];
+  for (const [i, p] of cases.entries()) {
+    const { n, m } = checkProgress(p);
+    const answered = p.mamad === 'none' || p.existing.rooms.some(r => r.isMamad);
+    expect(n === m, `case ${i}`).toBe(confirmationGaps(p).length === 0 && answered);
+  }
+  // a door outside the apartment, not confirmed: the count is the same as without it
+  const without = checkProgress(notApartmentB(confirmed(base)));
+  const outside = checkProgress(withOpening(notApartmentB(confirmed(base)), { confirmed: false }));
+  expect([outside.n, outside.m]).toEqual([without.n, without.m]);
+  expect(outside.counted.has('outside')).toBe(false);
 });

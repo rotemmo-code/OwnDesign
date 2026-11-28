@@ -247,6 +247,8 @@ export const copy = {
     outerHow: 'בדקו שקירות החוץ המסומנים נכונים, ואשרו.',
     confirmed: 'אושר',
     notConfirmed: 'לא אושר',
+    /** R49: an opening that holds nothing back: not beside a room of the apartment. */
+    notNeeded: 'מחוץ לדירה: אין צורך לאשר.',
     suggest: 'הצעה: קבוע',
     acceptOne: 'קבלת ההצעה',
     acceptAll: (n: number) => `קבלת כל ההצעות (${n})`,
