@@ -18,6 +18,17 @@ export const probeCode = () =>
     plugins: [
       react(),
       { name: 'no-reader', load: id => (id.replaceAll('\\', '/') === READER ? 'export const openPdf = () => { throw new Error("no reader in the probe"); };' : undefined) },
+      {
+        // a render counter on the memoised walls, for the probe only: the product has no test hook
+        name: 'count-wall-renders',
+        enforce: 'pre',
+        transform(source: string, id: string) {
+          if (!id.replaceAll('\\', '/').endsWith('src/editor/Overlay.tsx')) return undefined;
+          const counted = source.replace(/(const Walls = memo\(function Walls\([^)]*\)[^{]*\{)/, '$1\n  (globalThis as any).wallRenders = ((globalThis as any).wallRenders ?? 0) + 1;');
+          if (counted === source) throw new Error('the probe found no Walls component to count');
+          return counted;
+        },
+      },
     ],
     define: { 'process.env.NODE_ENV': '"production"' }, // a library build leaves it to the user; React reads it
     build: { write: false, minify: false, lib: { entry: ENTRY, formats: ['es'], fileName: 'probe' } },

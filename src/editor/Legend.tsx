@@ -1,4 +1,4 @@
-import { useId } from 'react';
+import { useId, useMemo } from 'react';
 import { copy } from '../copy';
 import type { WallClass } from '../model/types';
 import { COLOR, KIND_STYLE, type WallKind } from '../theme';
@@ -14,9 +14,13 @@ export type PaintIds = { added: string; finish: string };
 
 export const paintOf = (kind: WallKind, cls: WallClass): PaintName => (kind !== 'existing' ? kind : cls === 'changeable' ? 'existing' : cls);
 
+/** The same object for the life of the component: the memoised walls compare their props by identity. */
 export function usePaintIds(): PaintIds {
-  const id = useId().replace(/[^a-zA-Z0-9]/g, '');
-  return { added: `hatch-added-${id}`, finish: `hatch-finish-${id}` };
+  const raw = useId();
+  return useMemo(() => {
+    const id = raw.replace(/[^a-zA-Z0-9]/g, '');
+    return { added: `hatch-added-${id}`, finish: `hatch-finish-${id}` };
+  }, [raw]);
 }
 
 /** The SVG hatch patterns the paints use; colours from COLOR only. size: the hatch's spacing in the user units where it is used. */

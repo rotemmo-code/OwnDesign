@@ -58,3 +58,27 @@ test('500 walls: a preview frame stays under 50 ms', async ({ page }) => {
   console.log(`500 walls: ${frames.length} frames, the slowest ${Math.max(...frames).toFixed(1)} ms`);
   expect(Math.max(...frames)).toBeLessThan(50);
 });
+
+test('500 walls: the walls are not drawn again while a held end moves (their memo holds)', async ({ page }) => {
+  test.setTimeout(240_000);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await serveProbe(page);
+  const project = large();
+  await page.evaluate(async p => (await import(/* @vite-ignore */ '/probe.js' as string)).mount(p), project);
+  const k = project.calibration.mmPerPt;
+  const at = async (mm: [number, number]) => onScreen(page, [mm[0] / k, mm[1] / k]);
+  await page.getByRole('group', { name: e.tools }).getByRole('button', { name: e.select, exact: true }).click();
+  await expect(page.locator('[data-wall]')).toHaveCount(500, { timeout: 60_000 });
+  const middle = 500 + 7 * CELL;
+  await page.mouse.click(...(await at([middle + CELL / 2, middle])));
+  await expect(page.getByTestId('wall-details')).toBeVisible({ timeout: 60_000 });
+  await page.mouse.click(...(await at([middle + CELL, middle])));
+  await expect(page.getByTestId('step')).toHaveText(e.moveEnd);
+  const renders = () => page.evaluate(() => (globalThis as unknown as { wallRenders: number }).wallRenders);
+  const before = await renders();
+  expect(before).toBeGreaterThan(0);
+  const from = await at([middle + CELL, middle]);
+  for (let i = 0; i < 30; i++) await page.mouse.move(from[0] + i, from[1] + i / 2);
+  await expect(page.getByTestId('wall-preview')).toBeVisible();
+  expect(await renders()).toBe(before);
+});
