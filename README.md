@@ -22,8 +22,9 @@ Work in progress. Built and reviewed so far:
 | Finish layers (plaster or cladding) per wall side and free wall end, and the room that is left (net) | `src/model/finish.ts` |
 | Project file (open, save, download) and autosave draft in the browser | `src/storage/` |
 | Editor screen, part 1: draw walls by their centre line with a typed thickness, wall material, rooms with name and area, paint and legend per wall kind and class, locks with a note and a deliberate release, undo and redo, one view-reset control | `src/editor/Editor.tsx`, `Tools.tsx`, `Overlay.tsx`, `SidePanel.tsx`, `Legend.tsx`, `useProject.ts` |
+| Editor screen, part 2: doors, windows and passages on a wall, separator lines between spaces, splitting a wall, moving a wall end or an opening edge by two clicks, finish layers (plaster or cladding) with net and gross areas; locked openings and locked wall ends refuse a change with a note | `src/editor/Tools.tsx`, `Overlay.tsx`, `SidePanel.tsx`, `Legend.tsx`, `snap.ts` |
 
-Not built yet: doors, windows and finishes in the editor, the guided check before approval, the save buttons,
+Not built yet: the guided check before approval, the save buttons,
 wall detection, the planned state, PDF output.
 Scanned (image-only) PDFs are out of scope for this version.
 
