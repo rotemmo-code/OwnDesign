@@ -4,9 +4,10 @@ import { dist } from '../model/geo';
 import { canFinish } from '../model/finish';
 import { isInside } from '../model/kind';
 import { faceLength, formatCm, formatM2, type Metrics, parseCm, roomsOnSide } from '../model/measure';
-import type { FinishPlace, Id, Opening, Plaster, Reason, Wall, WallClass, WallMaterial } from '../model/types';
+import type { FinishPlace, Id, Opening, Plaster, Pt, Reason, Wall, WallClass, WallMaterial } from '../model/types';
 import { type Extra, Legend, paintText } from './Legend';
 import type { Finished, Lock } from './Overlay';
+import { wallAt } from './snap';
 import type { EditorCtx, Selected } from './Tools';
 
 const e = copy.editor;
@@ -34,14 +35,17 @@ export function CommitField({ value, onCommit, ...rest }: { value: string; onCom
 function WallDetails({ c, id, onFix }: { c: EditorCtx; id: Id; onFix(lock: Lock): void }) {
   const s = c.project.existing;
   const w = s.walls.find(x => x.id === id);
-  if (!w) return null;
+  // once per side and once per state, not on every pointer move: faces() is the costly part (R26, R30)
+  const sides = useMemo(() => {
+    if (!w) return null;
+    const rooms = { A: roomsOnSide(s, id, 'A'), B: roomsOnSide(s, id, 'B') };
+    const beside = [...new Set([...rooms.A, ...rooms.B])];
+    return { rooms, length: beside.length ? Math.max(...beside.map(room => faceLength(s, room, id))) : dist(w.a, w.b) };
+  }, [s, id]);
+  if (!w || !sides) return null;
+  const { length } = sides;
   const lock = c.derived.locks.get(id);
   const cls: WallClass = c.project.wallClass[id] ?? 'unknown';
-  // once per side and once per state, not on every pointer move: faces() is the costly part (R26, R30)
-  const length = useMemo(() => {
-    const beside = [...new Set([...roomsOnSide(s, id, 'A'), ...roomsOnSide(s, id, 'B')])];
-    return beside.length ? Math.max(...beside.map(room => faceLength(s, room, id))) : dist(w.a, w.b);
-  }, [s, id]);
   return (
     <section aria-labelledby="selected-title" data-testid="wall-details">
       <h2 id="selected-title">{paintText(c.derived.paints.get(id)!)}</h2>
@@ -80,7 +84,7 @@ function WallDetails({ c, id, onFix }: { c: EditorCtx; id: Id; onFix(lock: Lock)
           </button>
         ))}
       </div>
-      <Finishes c={c} w={w} />
+      <Finishes c={c} w={w} sides={sides.rooms} />
       <label>
         {e.material}{' '}
         <select value={w.material ?? ''} onChange={event => c.run({ type: 'x.setWall', id, material: (event.target.value || null) as WallMaterial | null })}>
@@ -96,27 +100,32 @@ function WallDetails({ c, id, onFix }: { c: EditorCtx; id: Id; onFix(lock: Lock)
   );
 }
 
+/** mm: an end this close to another wall's body is joined to it. */
+const JOINED_MM = 2;
 const FIELD = { A: 'finishA', B: 'finishB', start: 'finishStart', end: 'finishEnd' } as const;
 /**
  * The four finish fields of a wall: its two sides, named by the room each faces, and its two ends. A place where a finish
  * is not possible is disabled with the reason; a value kept there shows as not used (it is neither drawn nor counted).
  */
-function Finishes({ c, w }: { c: EditorCtx; w: Wall }) {
+function Finishes({ c, w, sides }: { c: EditorCtx; w: Wall; sides: Record<'A' | 'B', Id[]> }) {
   const s = c.project.existing;
   // once per state, not on every pointer move
   const places = useMemo((): [FinishPlace, string, string, boolean][] => {
     const side = (place: 'A' | 'B') => {
-      const ids = roomsOnSide(s, w.id, place);
-      const room = s.rooms.find(r => ids.includes(r.id) && isInside(r));
+      const room = s.rooms.find(r => sides[place].includes(r.id) && isInside(r));
       return room ? e.finishSide(room.name || e.unnamed) : e.finishNoRoom;
     };
+    // canFinish gives no reason for an end: an end that meets another wall is joined, any other end stands where no room
+    // of the apartment is (none drawn, or not ticked as the apartment's, or outdoors)
+    const others = s.walls.filter(x => x.id !== w.id);
+    const endWhy = (p: Pt) => (wallAt(p, others, JOINED_MM) ? e.endJoined : e.endNoRoom);
     return [
       ['A', side('A'), copy.reason['finish-outer-side']!, canFinish(s, w.id, 'A')],
       ['B', side('B'), copy.reason['finish-outer-side']!, canFinish(s, w.id, 'B')],
-      ['start', e.finishStart, e.endJoined, canFinish(s, w.id, 'start')],
-      ['end', e.finishEnd, e.endJoined, canFinish(s, w.id, 'end')],
+      ['start', e.finishStart, endWhy(w.a), canFinish(s, w.id, 'start')],
+      ['end', e.finishEnd, endWhy(w.b), canFinish(s, w.id, 'end')],
     ];
-  }, [s, w.id]);
+  }, [s, w, sides]);
   return (
     <fieldset className="finishes">
       <legend>{e.finish}</legend>
@@ -295,10 +304,11 @@ export function SidePanel({ c, selected, message, question, onQuestionDone, mama
   const s = c.project.existing;
   const paints = [...new Set(c.derived.paints.values())];
   const anyFinish = !!finished && finished.strips.size > 0;
-  const locks = s.openings.map(o => !!c.derived.openingLocks.get(o.id));
+  // as OpeningShape paints them: a locked one on an outer or mamad wall, a locked one on an inner wall, a free one
+  const paintOf = (o: Opening): Extra => (!c.derived.openingLocks.get(o.id) ? 'opening-free' : (c.derived.kinds.get(o.wallId) ?? 'existing') === 'existing' ? 'opening-locked-inner' : 'opening-locked');
+  const openingPaints = new Set(s.openings.map(paintOf));
   const extras: Extra[] = [
-    ...(locks.some(Boolean) ? (['opening-locked'] as const) : []),
-    ...(locks.some(x => !x) ? (['opening-free'] as const) : []),
+    ...(['opening-locked', 'opening-locked-inner', 'opening-free'] as const).filter(x => openingPaints.has(x)),
     ...(s.openings.some(o => o.released || !o.confirmed) ? (['unconfirmed'] as const) : []),
     ...(s.separators.length ? (['separator'] as const) : []),
     ...(anyFinish ? (['finish'] as const) : []),

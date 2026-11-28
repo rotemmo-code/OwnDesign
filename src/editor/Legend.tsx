@@ -55,18 +55,18 @@ export const paintText = (name: PaintName): string =>
 
 const ORDER: PaintName[] = ['exterior', 'mamad', 'fixed', 'existing', 'unknown', 'moved', 'added', 'removed'];
 /** The other things on the drawing that have a paint of their own (R22). */
-export type Extra = 'opening-locked' | 'opening-free' | 'unconfirmed' | 'separator' | 'finish';
-const EXTRAS: Extra[] = ['opening-locked', 'opening-free', 'unconfirmed', 'separator', 'finish'];
+export type Extra = 'opening-locked' | 'opening-locked-inner' | 'opening-free' | 'unconfirmed' | 'separator' | 'finish';
+const EXTRAS: Extra[] = ['opening-locked', 'opening-locked-inner', 'opening-free', 'unconfirmed', 'separator', 'finish'];
 const ARC = 'M3 13H13A10 10 0 0 0 3 3Z';
 
 function ExtraSwatch({ extra, ids }: { extra: Extra; ids: PaintIds }) {
   if (extra === 'separator') return <line x1="2" y1="8" x2="30" y2="8" stroke={COLOR.ink} strokeWidth="1" />;
   if (extra === 'finish') return <rect x="1" y="2" width="30" height="12" strokeWidth="1.5" {...finishPaint(ids)} />;
-  const stroke = extra === 'opening-locked' ? COLOR.exterior : extra === 'opening-free' ? COLOR.existing : COLOR.ink;
+  const stroke = { 'opening-locked': COLOR.exterior, 'opening-locked-inner': COLOR.fixed, 'opening-free': COLOR.existing, unconfirmed: COLOR.ink }[extra];
   return <path d={ARC} fill="none" stroke={stroke} strokeWidth="1.5" strokeDasharray={extra === 'unconfirmed' ? '3 2' : undefined} />;
 }
 const extraText = (extra: Extra) =>
-  ({ 'opening-locked': copy.editor.lockedOpening, 'opening-free': copy.editor.freeOpening, unconfirmed: copy.editor.unconfirmed, separator: copy.editor.separatorLegend, finish: copy.editor.finishLegend })[extra];
+  ({ 'opening-locked': copy.editor.lockedOpening, 'opening-locked-inner': copy.editor.lockedInnerOpening, 'opening-free': copy.editor.freeOpening, unconfirmed: copy.editor.unconfirmed, separator: copy.editor.separatorLegend, finish: copy.editor.finishLegend })[extra];
 
 /** Every paint on the drawing, each with a swatch drawn with the same paint and its words. */
 export function Legend({ paints, extras = [] }: { paints: PaintName[]; extras?: Extra[] }) {

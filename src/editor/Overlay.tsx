@@ -77,14 +77,15 @@ const Walls = memo(function Walls({ state, derived, ids }: { state: State; deriv
 
 /**
  * An opening: a white gap across its wall, with a door's arc, a window's line, or nothing for a passage; the entry door's
- * arc is heavier. Locked: the colour of its wall's kind; free: the existing colour; released or not confirmed: dashed (R22).
+ * arc is heavier. Locked: the colour of its wall's kind, on an inner wall the fixed colour (R32); free: the existing
+ * colour; released or not confirmed: dashed (R22).
  */
 function OpeningShape({ o, w, derived }: { o: Opening; w: Wall; derived: Derived }) {
   const [p, q] = [alongWall(w, o.offset), alongWall(w, o.offset + o.width)];
   const n = { x: -(q.y - p.y) / o.width, y: (q.x - p.x) / o.width };
   const locked = !!derived.openingLocks.get(o.id);
   const kind = derived.kinds.get(w.id) ?? 'existing';
-  const colour = locked ? COLOR[kind] : COLOR.existing;
+  const colour = !locked ? COLOR.existing : kind === 'existing' ? COLOR.fixed : COLOR[kind];
   const dashed = o.released || !o.confirmed ? '5 4' : undefined;
   const line = { stroke: colour, strokeDasharray: dashed, vectorEffect: 'non-scaling-stroke' as const, fill: 'none' };
   return (
