@@ -259,7 +259,7 @@ export function useOpeningTool(c: EditorCtx, fills: SnapIndex, kind: Opening['ki
       // a first click whose wall is gone (undone) counts for nothing
       if (!first || !wall) {
         const w = under && wallOf(c, under);
-        if (!w) return c.say(e.openingFirst);
+        if (!w) return c.say(e.noWall);
         return setFirst({ wall: w.id, t: along(w, at, r) });
       }
       if (under && under !== first.wall) return c.say(e.otherWall);
