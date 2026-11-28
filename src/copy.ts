@@ -239,6 +239,8 @@ export const copy = {
     noWindows: 'אין חלונות בשרטוט.',
     item: (kind: string, i: number, width: string) => `${kind} ${i}, ${width} ס"מ`,
     allOuter: 'כל קירות החוץ',
+    /** R50: the highlight of the outer walls step, named in the legend. */
+    outerLegend: 'קירות החוץ שננעלים ב"אישור"',
     outerHow: 'בדקו שקירות החוץ המסומנים נכונים, ואשרו.',
     confirmed: 'אושר',
     notConfirmed: 'לא אושר',

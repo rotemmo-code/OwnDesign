@@ -9,7 +9,7 @@ import type { Box } from '../pdf/render';
 import { CheckList } from './CheckList';
 import { CommitField } from './CommitField';
 import { type ContractorColour, type Extra, Legend, paintText } from './Legend';
-import type { Finished, Lock } from './Overlay';
+import type { Finished, Lock, Stretch } from './Overlay';
 import { wallAt } from './snap';
 import { COLOR } from '../theme';
 import type { EditorCtx, Selected } from './Tools';
@@ -306,6 +306,8 @@ type Props = {
   colours: ContractorColour[];
   /** The walls suggested as fixed, computed a moment after an edit and only for the details tab (R48). */
   suggested: Set<Id>;
+  /** What the outer walls' "אישור" locks, while the check tab is open. */
+  stretches: Stretch[];
 };
 
 const TABS: [Tab, string][] = [
@@ -359,7 +361,7 @@ export function SidePanel(props: Props) {
           ))}
         </div>
         <div role="tabpanel" id="tab-panel" aria-labelledby={`tab-${tab}`}>
-          {tab === 'check' ? <CheckList c={c} onFix={props.onFix} onShow={props.onShow} /> : <Details {...props} />}
+          {tab === 'check' ? <CheckList c={c} onFix={props.onFix} onShow={props.onShow} stretches={props.stretches} /> : <Details {...props} />}
         </div>
       </div>
       <PanelLegend {...props} />
@@ -368,7 +370,7 @@ export function SidePanel(props: Props) {
 }
 
 /** The legend of every paint on the drawing; in the details tab with the suggestions too (R48). */
-function PanelLegend({ c, finished, colours, suggested, tab }: Props) {
+function PanelLegend({ c, finished, colours, suggested, tab, stretches }: Props) {
   const s = c.project.existing;
   const paints = [...new Set(c.derived.paints.values())];
   const anyFinish = !!finished && finished.strips.size > 0;
@@ -381,6 +383,7 @@ function PanelLegend({ c, finished, colours, suggested, tab }: Props) {
     ...(['opening-locked', 'opening-locked-inner', 'opening-free'] as const).filter(x => openingPaints.has(x)),
     ...(s.openings.some(o => o.released || !o.confirmed) ? (['unconfirmed'] as const) : []),
     ...(s.openings.some(o => o.review) || s.walls.some(w => w.review) ? (['review'] as const) : []),
+    ...(tab === 'check' && stretches.length ? (['outer'] as const) : []),
     ...(s.separators.length ? (['separator'] as const) : []),
     ...(anyFinish ? (['finish'] as const) : []),
   ];

@@ -56,21 +56,22 @@ export const paintText = (name: PaintName): string =>
 
 const ORDER: PaintName[] = ['exterior', 'mamad', 'fixed', 'existing', 'unknown', 'moved', 'added', 'removed'];
 /** The other things on the drawing that have a paint of their own (R22). */
-export type Extra = 'opening-locked' | 'opening-locked-inner' | 'opening-free' | 'unconfirmed' | 'review' | 'separator' | 'finish';
-const EXTRAS: Extra[] = ['opening-locked', 'opening-locked-inner', 'opening-free', 'unconfirmed', 'review', 'separator', 'finish'];
+export type Extra = 'opening-locked' | 'opening-locked-inner' | 'opening-free' | 'unconfirmed' | 'review' | 'outer' | 'separator' | 'finish';
+const EXTRAS: Extra[] = ['opening-locked', 'opening-locked-inner', 'opening-free', 'unconfirmed', 'review', 'outer', 'separator', 'finish'];
 const ARC = 'M3 13H13A10 10 0 0 0 3 3Z';
 
 /** lockedColours: the colours of the walls that hold a locked opening (outer, mamad), one arc each (R46). */
 function ExtraSwatch({ extra, ids, lockedColours }: { extra: Extra; ids: PaintIds; lockedColours: string[] }) {
   if (extra === 'separator') return <line x1="2" y1="8" x2="30" y2="8" stroke={COLOR.ink} strokeWidth="1" />;
   if (extra === 'finish') return <rect x="1" y="2" width="30" height="12" strokeWidth="1.5" {...finishPaint(ids)} />;
+  if (extra === 'outer') return <rect x="3" y="4" width="26" height="8" className="highlight" />;
   if (extra === 'review') return <rect x="1" y="2" width="30" height="12" fill="none" stroke={COLOR.ink} strokeWidth="1.5" strokeDasharray="3 2" />;
   if (extra === 'opening-locked') return <>{lockedColours.map((stroke, i) => <path key={stroke} d={ARC} transform={`translate(${i * 16} 0)`} fill="none" stroke={stroke} strokeWidth="1.5" />)}</>;
   const stroke = { 'opening-locked-inner': COLOR.fixed, 'opening-free': COLOR.existing, unconfirmed: COLOR.ink }[extra];
   return <path d={ARC} fill="none" stroke={stroke} strokeWidth="1.5" strokeDasharray={extra === 'unconfirmed' ? '3 2' : undefined} />;
 }
 const extraText = (extra: Extra) =>
-  ({ 'opening-locked': copy.editor.lockedOpening, 'opening-locked-inner': copy.editor.lockedInnerOpening, 'opening-free': copy.editor.freeOpening, unconfirmed: copy.editor.unconfirmed, review: copy.editor.review, separator: copy.editor.separatorLegend, finish: copy.editor.finishLegend })[extra];
+  ({ 'opening-locked': copy.editor.lockedOpening, 'opening-locked-inner': copy.editor.lockedInnerOpening, 'opening-free': copy.editor.freeOpening, unconfirmed: copy.editor.unconfirmed, review: copy.editor.review, outer: copy.editor.outerLegend, separator: copy.editor.separatorLegend, finish: copy.editor.finishLegend })[extra];
 
 /** A colour of the contractor's drawing. label: what she says it means; absent for one that cannot be labelled. */
 export type ContractorColour = { hex: string; label?: string };

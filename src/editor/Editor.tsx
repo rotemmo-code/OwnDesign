@@ -4,7 +4,7 @@ import type { Action, Id, Plaster, Project, Result } from '../model/types';
 import type { ExtractedPage } from '../pdf/extract';
 import type { Box } from '../pdf/render';
 import type { Tool } from './Canvas';
-import { derive, deriveFinish, type Lock, Overlay } from './Overlay';
+import { derive, deriveFinish, type Lock, Overlay, outerStretches } from './Overlay';
 import { type Question, SidePanel, type Tab } from './SidePanel';
 import { suggestedFixed } from '../model/rules';
 import { snapIndex } from './snap';
@@ -46,6 +46,8 @@ export function useEditor({ store, page, plaster, measure, ptPerPx }: { store: S
       clearTimeout(timer);
     };
   }, [project?.existing, project?.wallClass, tab]);
+  // what the outer walls' "אישור" locks, while the check tab shows it (R50)
+  const stretches = useMemo(() => (project && tab === 'check' ? outerStretches(project.existing) : null), [project?.existing, tab]);
   const suggestions = useMemo(() => (ask ? suggestedFixed(ask) : []), [ask?.existing, ask?.wallClass]);
   const [net, setNet] = useState(true);
   // The drawing as the editor's own last action left it. When the drawing changes otherwise (undo, redo, a rescale, a load) its
@@ -136,7 +138,7 @@ export function useEditor({ store, page, plaster, measure, ptPerPx }: { store: S
       preview={active.preview?.(ptPerPx)}
       marks={tool === 'measure' ? measure.marks(ptPerPx) : active.marks?.(ptPerPx)}
       parts={question?.type === 'split' ? question.parts : []}
-      highlight={tab === 'check'}
+      highlight={stretches}
     />
   );
   return {
@@ -180,6 +182,7 @@ export function useEditor({ store, page, plaster, measure, ptPerPx }: { store: S
         }}
         colours={colours}
         suggested={suggested}
+        stretches={stretches ?? []}
       />
     ),
   };

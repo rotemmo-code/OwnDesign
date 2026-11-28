@@ -264,6 +264,30 @@ test('outer walls step highlights the outer walls and אישור locks them; the
   await expect(outer.getByTestId('status')).toHaveText(e.notConfirmed);
 });
 
+test('with the mamad marked, the outer walls step highlights every stretch its אישור locks, named in the legend; after אישור exactly those are locked (R50)', async ({ page }) => {
+  await start(page);
+  await bothRooms(page);
+  await openCheck(page);
+  await step(page, 'mamad').getByRole('group').getByRole('button', { name: new RegExp(`^${e.unnamed}`) }).click();
+  const lit = () => page.locator('[data-highlight]').evaluateAll(list => list.map(p => p.getAttribute('data-highlight')!).sort());
+  const ids = await page.locator('[data-wall]').evaluateAll(list => list.map(p => p.getAttribute('data-wall')!));
+  const boxes = await wallBoxes(page);
+  const partition = ids[boxes.findIndex(b => b[0] === 3200 && b[2] === 3300)];
+  // every outer wall, the mamad's three too: 6 stretches on 4 walls (the top and bottom ones are cut at the partition's joint)
+  expect([...new Set(await lit())]).toEqual(ids.filter(id => id !== partition).sort());
+  expect(await lit()).toHaveLength(6);
+  await expect(page.getByRole('region', { name: e.legend })).toContainText(e.outerLegend);
+  await button(items(page, 'envelope').first(), e.confirm).click();
+  await button(step(page, 'mamad'), e.fix).click(); // the mamad's own lock off: what is left is the outer walls'
+  await tab(page, e.detailsTab).click();
+  await expect(page.getByRole('region', { name: e.legend })).not.toContainText(e.outerLegend);
+  for (const at of [[3000, 100], [6300, 3000], [3000, 4300], [100, 3000]] as [number, number][]) {
+    const w = await pick(page, at, 'wall-details');
+    await expect(w.getByTestId('lock'), String(at)).toContainText(e.envelopeLocked);
+  }
+  await expect((await pick(page, [3250, 1600], 'wall-details')).getByTestId('lock')).toHaveText(e.free);
+});
+
 test('a suggestion: הצעה: קבוע with קבלת ההצעה on the window wall; קבלת כל ההצעות sets the outer walls fixed', async ({ page }) => {
   await start(page);
   await bothRooms(page);

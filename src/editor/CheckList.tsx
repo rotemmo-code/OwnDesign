@@ -4,7 +4,7 @@ import { corners } from '../model/geo';
 import { formatCm, formatM2 } from '../model/measure';
 import type { Id, Opening, Pt, Room } from '../model/types';
 import type { Box } from '../pdf/render';
-import type { Lock } from './Overlay';
+import type { Lock, Stretch } from './Overlay';
 import { alongWall } from './snap';
 import type { EditorCtx, Selected } from './Tools';
 
@@ -15,6 +15,8 @@ type Props = {
   onFix(lock: Lock): void;
   /** Select the item and fit the view to its box, in view points. */
   onShow(sel: Selected, box: Box): void;
+  /** What the outer walls' "אישור" locks (R50). */
+  stretches: Stretch[];
 };
 
 /** The box of some points in mm, in view points. */
@@ -35,7 +37,7 @@ const roomText = (c: EditorCtx, r: Room) => `${r.name || e.unnamed} ${e.m2(forma
  * The check before approval (7E): six steps, each through the same actions as the details tab, so that a locked item
  * refuses with its note until "תיקון" (R38). "אישור הכול" confirms only what is unconfirmed or released.
  */
-function List({ c, onFix, onShow }: Props) {
+function List({ c, onFix, onShow, stretches }: Props) {
   const p = c.project;
   const s = p.existing;
   const marked = s.rooms.find(r => r.isMamad);
@@ -48,7 +50,6 @@ function List({ c, onFix, onShow }: Props) {
   };
   // while a room is the mamad its mark does not move (R18); after its "תיקון" a choice is the answer (R19, R39)
   const choose = (room: Id | 'none') => (marked ? marked.id !== room && c.say(e.mamadTaken) : c.run({ type: 'setMamad', room }));
-  const outer = s.walls.filter(w => c.derived.kinds.get(w.id) === 'exterior');
   const openings = (kinds: Opening['kind'][], empty: string) => {
     const list = s.openings.filter(o => kinds.includes(o.kind));
     const open = list.filter(o => !done(o)).map(o => o.id);
@@ -138,12 +139,12 @@ function List({ c, onFix, onShow }: Props) {
         'envelope',
         <>
           <p>{e.outerHow}</p>
-          {outer.length > 0 && (
+          {stretches.length > 0 && (
             <ul>
               <li data-item="envelope">
                 {e.allOuter} <span data-testid="status">{p.envelope === 'confirmed' ? e.confirmed : e.notConfirmed}</span>
                 <span className="row">
-                  <Button text={e.show} onClick={() => onShow(null, boxOf(outer.flatMap(w => c.derived.outlines.get(w.id) ?? []), c.k))} />
+                  <Button text={e.show} onClick={() => onShow(null, boxOf(stretches.flatMap(x => x.ring), c.k))} />
                   {p.envelope !== 'confirmed' && <Button text={e.confirm} onClick={() => c.run({ type: 'x.confirmEnvelope' })} />}
                   {p.envelope !== 'released' && <Button text={e.fix} onClick={() => onFix('envelope')} />}
                 </span>
@@ -157,4 +158,4 @@ function List({ c, onFix, onShow }: Props) {
 }
 
 /** Drawn again only when the project, what is derived from it or the selection changes: not on a pointer move (R43). */
-export const CheckList = memo(List, (a, b) => a.c.project === b.c.project && a.c.derived === b.c.derived && a.c.selected === b.c.selected);
+export const CheckList = memo(List, (a, b) => a.c.project === b.c.project && a.c.derived === b.c.derived && a.c.selected === b.c.selected && a.stretches === b.stretches);

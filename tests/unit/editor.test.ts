@@ -1,6 +1,8 @@
 import { expect, it } from 'vitest';
 import { copy } from '../../src/copy';
+import { outerStretches } from '../../src/editor/Overlay';
 import { createStore, newProject, releasedAfter, rescaled, roomEvents } from '../../src/editor/useProject';
+import { envelopeLeaf, envelopeSpans } from '../../src/model/rules';
 import { apply } from '../../src/model/apply';
 import { ProjectSchema } from '../../src/model/schema';
 import type { Action, Project } from '../../src/model/types';
@@ -230,4 +232,19 @@ it('dispatchAll: a refusal anywhere changes nothing and pushes nothing; an empty
   expect(store.project).toBe(before);
   expect(store.canUndo).toBe(false);
   expect(store.dispatchAll([]).ok).toBe(false);
+});
+
+it('outerStretches: one ring per envelope stretch of the model, the outer walls of the mamad included, each inside its wall (R50)', () => {
+  const p = open();
+  const s = { ...p.existing, rooms: p.existing.rooms.map(r => (r.id === 'room-b' ? { ...r, isMamad: true } : r)) };
+  const got = outerStretches(s);
+  const spans = s.walls.flatMap(w => envelopeSpans(s, w.id).map(() => w.id));
+  const leaves = s.walls.filter(w => !envelopeSpans(s, w.id).length && envelopeLeaf(s, w)).map(w => w.id);
+  expect(got.map(x => x.wall).sort()).toEqual([...spans, ...leaves].sort());
+  expect(new Set(got.map(x => x.wall))).toEqual(new Set(['top', 'right', 'bottom', 'left']));
+  for (const { wall, ring } of got) {
+    const w = s.walls.find(x => x.id === wall)!;
+    const [x0, x1] = [Math.min(w.a.x, w.b.x) - w.thickness, Math.max(w.a.x, w.b.x) + w.thickness];
+    for (const q of ring) expect(q.x >= x0 && q.x <= x1, wall).toBe(true);
+  }
 });

@@ -49,6 +49,21 @@ export function derive(p: Project): Derived {
   };
 }
 
+/** A stretch of a wall that the outer walls' "אישור" locks: the ring it covers on the drawing. */
+export type Stretch = { wall: Id; ring: Pt[] };
+/**
+ * What "אישור" of the outer walls locks (R50), by the model's own rule for the envelope lock: each outer stretch of a
+ * wall with its corner joints (the mamad's outer walls too), and a facade leaf whole.
+ */
+export function outerStretches(s: State): Stretch[] {
+  return s.walls.flatMap(w => {
+    const l = dist(w.a, w.b);
+    const spans = envelopeSpans(s, w.id);
+    if (spans.length) return spans.map(k => ({ wall: w.id, ring: corners(alongWall(w, Math.max(0, k.from - k.before)), alongWall(w, Math.min(l, k.to + k.after)), w.thickness) }));
+    return l && envelopeLeaf(s, w) ? [{ wall: w.id, ring: corners(w.a, w.b, w.thickness) }] : [];
+  });
+}
+
 export function deriveFinish(s: State): Finished {
   return {
     strips: new Map([...finishStrips(s)].map(([id, g]) => [id, rings(g)])),
@@ -116,12 +131,12 @@ type Props = {
   marks?: ReactNode;
   /** Parts of a split room, numbered for the question which keeps the name. */
   parts?: Id[];
-  /** The outer walls stand out (the check list's step, R40). */
-  highlight?: boolean;
+  /** The stretches the outer walls' "אישור" locks stand out (the check list's step, R40, R50). */
+  highlight?: Stretch[] | null;
 };
 
 /** The draft over the page, in mm. Room names and areas come last: nothing is drawn over them (owner R9). */
-export function Overlay({ project, derived, finished, net, k, ptPerPx, selected, preview, marks, parts = [], highlight = false }: Props) {
+export function Overlay({ project, derived, finished, net, k, ptPerPx, selected, preview, marks, parts = [], highlight = null }: Props) {
   const s = project.existing;
   const ids = usePaintIds();
   const px = ptPerPx * k; // mm per CSS pixel
@@ -150,7 +165,7 @@ export function Overlay({ project, derived, finished, net, k, ptPerPx, selected,
         <Walls state={s} derived={derived} ids={ids} />
         {/* a wall the detector doubts: dashed around, no mark (R36) */}
         {s.walls.map(w => w.review && <path key={w.id} className="review" data-review={w.id} d={pathOf(derived.outlines.get(w.id) ?? [])} />)}
-        {highlight && s.walls.map(w => derived.kinds.get(w.id) === 'exterior' && <path key={w.id} className="highlight" data-highlight={w.id} d={pathOf(derived.outlines.get(w.id) ?? [])} />)}
+        {highlight?.map((x, i) => <path key={i} className="highlight" data-highlight={x.wall} d={pathOf(x.ring)} />)}
         {finished &&
           [...finished.strips].map(([id, list]) => (
             <path key={id} data-finish={id} d={list.map(pathOf).join('')} fillRule="evenodd" strokeWidth="1" vectorEffect="non-scaling-stroke" {...finishPaint(ids)} />
