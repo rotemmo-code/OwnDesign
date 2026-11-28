@@ -40,6 +40,8 @@ test('500 walls: a preview frame stays under 50 ms', async ({ page }) => {
   await expect(page.getByTestId('wall-details')).toBeVisible({ timeout: 60_000 });
   await page.mouse.click(...(await at([middle + CELL, middle]))); // its end
   await expect(page.getByTestId('step')).toHaveText(e.moveEnd);
+  // what the load asked for after its paint (the suggestions, R48) is done before the preview frames are timed
+  await page.evaluate(() => new Promise(r => requestAnimationFrame(() => setTimeout(r, 100))));
   const from = await at([middle + CELL, middle]);
   await page.evaluate(() => {
     const w = window as unknown as { frames_: number[] };
